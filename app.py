@@ -1,4 +1,5 @@
 import os
+import re
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from dotenv import load_dotenv
@@ -72,7 +73,21 @@ def whatsapp_bot():
             else:
                 msg.body("Format Error. Please use: *Age, Symptom, Severity*")
         else:
-            msg.body("Please use the format: *Age, Symptom, Severity*\nExample: `23, fever, mild` \n\n_Executed By Aniket Yadav_")
+            # Fallback: allow direct symptom queries like "fever".
+            symptom = re.sub(r'[^a-z\s]', '', incoming_msg).strip()
+            local_data = get_ayurvedic_knowledge(symptom) if symptom else None
+
+            if local_data:
+                result = f"📖 *Virasat Record for {symptom.capitalize()}*:\n\n"
+                result += f"• Medicine: {local_data.get('medicine')}\n"
+                result += f"• Remedy: {local_data.get('home_remedy')}\n"
+                result += f"• Precaution: {local_data.get('avoid')}\n\n"
+                result += "For personalized dosage, send: *Age, Symptom, Severity*"
+                result += "\nExample: `23, fever, mild`\n\n"
+                result += "_Executed By Aniket Yadav_"
+                msg.body(result)
+            else:
+                msg.body("Please use the format: *Age, Symptom, Severity*\nExample: `23, fever, mild`\nOr send a known symptom like: fever\n\n_Executed By Aniket Yadav_")
 
         print("✅ Response sent successfully!")
         return str(resp)
