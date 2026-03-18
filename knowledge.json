@@ -1,0 +1,38 @@
+{
+  "fever": {
+    "medicine": "Paracetamol or Aspirin",
+    "home_remedy": "Tulsi leaves tea with honey",
+    "avoid": "Cold water, ice cream, oily food",
+    "lifestyle_tips": "Rest well, drink warm water, avoid exertion"
+  },
+  "cough": {
+    "medicine": "Honey with turmeric",
+    "home_remedy": "Ginger tea with lemon",
+    "avoid": "Dairy products, cold drinks",
+    "lifestyle_tips": "Keep throat warm, avoid dust, drink plenty of water"
+  },
+  "headache": {
+    "medicine": "Paracetamol or Ibuprofen",
+    "home_remedy": "Sandalwood paste on forehead",
+    "avoid": "Stress, loud noise, bright lights",
+    "lifestyle_tips": "Rest in dark room, apply cold compress, meditate"
+  },
+  "cold": {
+    "medicine": "Vitamin C tablets",
+    "home_remedy": "Ginger turmeric milk",
+    "avoid": "Cold foods, ice cream",
+    "lifestyle_tips": "Stay warm, get adequate sleep, use humidifier"
+  },
+  "acidity": {
+    "medicine": "Antacid tablets",
+    "home_remedy": "Coconut water and buttermilk",
+    "avoid": "Spicy food, citrus, caffeine",
+    "lifestyle_tips": "Eat light meals, avoid late night eating, maintain posture"
+  },
+  "indigestion": {
+    "medicine": "Digestive enzymes",
+    "home_remedy": "Ginger powder with warm water",
+    "avoid": "Heavy meals, fried foods",
+    "lifestyle_tips": "Chew slowly, walk after meals, drink water regularly"
+  }
+}
