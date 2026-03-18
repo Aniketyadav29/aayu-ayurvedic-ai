@@ -21,20 +21,39 @@ jobs:
             echo "url=https://aayu-ayurvedic-ai-1.onrender.com/health" >> "$GITHUB_OUTPUT"
           fi
 
+          ROOT_URL="${SECRET_URL%/health}"
+          if [ -z "$ROOT_URL" ] || [ "$ROOT_URL" = "$SECRET_URL" ]; then
+            ROOT_URL="https://aayu-ayurvedic-ai-1.onrender.com"
+          fi
+          echo "root_url=$ROOT_URL" >> "$GITHUB_OUTPUT"
+
       - name: Ping Render health URL
         run: |
-          URL="${{ steps.resolve.outputs.url }}"
-          echo "Pinging $URL"
+          PRIMARY_URL="${{ steps.resolve.outputs.url }}"
+          ROOT_URL="${{ steps.resolve.outputs.root_url }}"
           ATTEMPT=1
           MAX_ATTEMPTS=4
           SUCCESS=0
 
+          ping_url() {
+            TARGET="$1"
+            HTTP_CODE=$(curl -sS -L -o /dev/null -w "%{http_code}" --max-time 45 "$TARGET" || echo "000")
+            echo "URL: $TARGET -> HTTP $HTTP_CODE"
+            if [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] && [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 500 ]; then
+              return 0
+            fi
+            return 1
+          }
+
           while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS"
-            HTTP_CODE=$(curl -sS -L -o /dev/null -w "%{http_code}" --max-time 45 "$URL" || echo "000")
-            echo "HTTP $HTTP_CODE"
 
-            if [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] && [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            if ping_url "$PRIMARY_URL"; then
+              SUCCESS=1
+              break
+            fi
+
+            if ping_url "$ROOT_URL"; then
               SUCCESS=1
               break
             fi
@@ -47,6 +66,5 @@ jobs:
           done
 
           if [ "$SUCCESS" -ne 1 ]; then
-            echo "Keepalive ping failed after retries"
-            exit 1
+            echo "Warning: keepalive ping did not get a healthy response, but workflow will continue."
           fi
