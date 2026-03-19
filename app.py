@@ -61,8 +61,9 @@ SEVERITY_KEYWORDS = {
 }
 
 USER_SESSIONS = {}
+USER_LANGUAGE_PREF = {}
 GUIDED_STEPS = ["age", "symptom", "duration", "severity", "pain_reason", "activities"]
-STEP_PROMPTS = {
+STEP_PROMPTS_EN = {
     "age": "Step 1/6: Please enter your age (example: 28)",
     "symptom": "Step 2/6: What is your main symptom or disease?",
     "duration": "Step 3/6: Since when are you facing this problem? (example: 2 days / 1 week)",
@@ -71,7 +72,16 @@ STEP_PROMPTS = {
     "activities": "Step 6/6: Tell me your recent activities/routine (sleep, food, work, exercise).",
 }
 
-HELP_TEXT = (
+STEP_PROMPTS_HI = {
+    "age": "चरण 1/6: कृपया अपनी उम्र लिखें (उदाहरण: 28)",
+    "symptom": "चरण 2/6: आपकी मुख्य समस्या/लक्षण क्या है?",
+    "duration": "चरण 3/6: यह समस्या कब से है? (उदाहरण: 2 दिन / 1 हफ्ता)",
+    "severity": "चरण 4/6: समस्या कितनी गंभीर है? (mild / moderate / severe)",
+    "pain_reason": "चरण 5/6: आपके हिसाब से दर्द/समस्या की वजह क्या हो सकती है?",
+    "activities": "चरण 6/6: अपनी हाल की दिनचर्या बताएं (नींद, खाना, काम, एक्सरसाइज)।",
+}
+
+HELP_TEXT_EN = (
     "📘 *How to use AAYU*\n"
     "1) Step-by-step consultation: type `start`\n"
     "2) Quick structured query: `Age, Symptom, Severity`\n"
@@ -87,6 +97,24 @@ HELP_TEXT = (
     "   Example: `severe chest pain and difficulty breathing`\n"
     "8) Stop consultation: type `cancel`\n"
     "9) Show this menu again: type `help`"
+)
+
+HELP_TEXT_HI = (
+    "📘 *AAYU इस्तेमाल करने का तरीका*\n"
+    "1) चरण-दर-चरण कंसल्टेशन: `start` लिखें\n"
+    "2) जल्दी क्वेरी: `Age, Symptom, Severity`\n"
+    "   उदाहरण: `23, fever, mild`\n"
+    "3) पैराग्राफ में बताएं:\n"
+    "   उदाहरण: `मुझे 2 दिन से तेज सिरदर्द है`\n"
+    "4) सीधे लक्षण लिखें:\n"
+    "   उदाहरण: `migraine`\n"
+    "5) पते से नजदीकी अस्पताल:\n"
+    "   उदाहरण: `hospital near Noida Sector 62`\n"
+    "6) लाइव लोकेशन शेयर करके नजदीकी अस्पताल पाएं\n"
+    "7) इमरजेंसी सपोर्ट:\n"
+    "   उदाहरण: `severe chest pain and difficulty breathing`\n"
+    "8) कंसल्टेशन रोकने के लिए: `cancel`\n"
+    "9) यह मेनू फिर से देखने के लिए: `help`"
 )
 
 REASON_HINTS = {
@@ -148,6 +176,27 @@ def parse_age(text):
     return None
 
 
+def detect_language(text):
+    text = text or ""
+    if re.search(r"[\u0900-\u097F]", text):
+        return "hi"
+
+    hindi_keywords = ["hindi", "हिंदी", "namaste", "नमस्ते", "mujhe", "dard", "bukhar"]
+    lower = text.lower()
+    if any(keyword in lower for keyword in hindi_keywords):
+        return "hi"
+    return "en"
+
+
+def get_help_text(lang):
+    return HELP_TEXT_HI if lang == "hi" else HELP_TEXT_EN
+
+
+def get_step_prompt(step, lang):
+    prompts = STEP_PROMPTS_HI if lang == "hi" else STEP_PROMPTS_EN
+    return prompts.get(step, STEP_PROMPTS_EN.get(step, "Please continue."))
+
+
 def parse_severity(text):
     """Infer severity level from common words in natural language input."""
     for severity, words in SEVERITY_KEYWORDS.items():
@@ -201,6 +250,18 @@ def parse_natural_input(incoming_msg):
 def user_wants_hospital_help(text):
     keywords = ["hospital", "doctor", "clinic", "nearest hospital", "nearby hospital", "emergency"]
     return any(keyword in text for keyword in keywords)
+
+
+def is_greeting(text):
+    text = (text or "").strip().lower()
+    greeting_tokens = ["hi", "hello", "hey", "namaste", "नमस्ते", "हैलो", "aayu"]
+
+    # Regex word boundaries work well for Latin text but can miss some Unicode scripts,
+    # so we use direct token equality + substring fallback.
+    words = set(text.split())
+    if any(token in words for token in greeting_tokens):
+        return True
+    return any(token in text for token in greeting_tokens)
 
 
 def extract_address_from_text(text):
@@ -287,15 +348,19 @@ def should_escalate_guided(session_data):
     return unique
 
 
-def start_guided_session(user_id):
+def start_guided_session(user_id, lang="en"):
     USER_SESSIONS[user_id] = {
         "step_index": 0,
         "data": {},
+        "lang": lang,
     }
     return (
-        "🩺 Starting step-by-step consultation.\n"
-        "You can type `cancel` anytime to stop.\n\n"
-        f"{STEP_PROMPTS['age']}"
+        (
+            "🩺 चरण-दर-चरण कंसल्टेशन शुरू हो रहा है।\nआप कभी भी `cancel` लिखकर रोक सकते हैं।\n\n"
+            if lang == "hi"
+            else "🩺 Starting step-by-step consultation.\nYou can type `cancel` anytime to stop.\n\n"
+        )
+        + get_step_prompt("age", lang)
     )
 
 
@@ -330,7 +395,7 @@ def get_next_prompt(user_id):
     if session["step_index"] >= len(GUIDED_STEPS):
         return None
 
-    return STEP_PROMPTS[GUIDED_STEPS[session["step_index"]]]
+    return get_step_prompt(GUIDED_STEPS[session["step_index"]], session.get("lang", "en"))
 
 
 def save_step_answer(user_id, step, answer):
@@ -450,26 +515,32 @@ def whatsapp_bot():
     msg = resp.message()
 
     # 2. Flexible Greeting Logic (Handles Hi, Hello, etc.)
-    greetings = ['hi', 'hello', 'hey', 'namaste', 'aayu']
-    if any(re.search(rf"\b{re.escape(greet)}\b", incoming_msg) for greet in greetings):
+    if is_greeting(incoming_msg):
+        lang = USER_LANGUAGE_PREF.get(from_user) or detect_language(request.values.get('Body', ''))
+        USER_LANGUAGE_PREF[from_user] = lang
+        intro = f"Welcome {user_name}! 🌿\n\n" if lang == "en" else f"नमस्ते {user_name}! 🌿\n\n"
         msg.body(
-            f"Welcome {user_name}! 🌿\n\n"
-            + HELP_TEXT
-            + "\n\nTip: type `start` to begin guided consultation now."
+            intro
+            + get_help_text(lang)
+            + ("\n\nTip: type `start` to begin guided consultation now." if lang == "en" else "\n\nसुझाव: guided consultation शुरू करने के लिए `start` लिखें।")
             + "\n\n_Executed By Aniket Yadav_"
         )
         return str(resp)
 
-    if incoming_msg in {"help", "menu", "instructions", "guide"}:
+    if incoming_msg in {"help", "menu", "instructions", "guide", "मदद", "हेल्प"}:
+        lang = USER_LANGUAGE_PREF.get(from_user) or detect_language(request.values.get('Body', ''))
+        USER_LANGUAGE_PREF[from_user] = lang
         msg.body(
-            f"Hi {user_name}!\n\n"
-            + HELP_TEXT
+            (f"Hi {user_name}!\n\n" if lang == "en" else f"नमस्ते {user_name}!\n\n")
+            + get_help_text(lang)
             + "\n\n_Executed By Aniket Yadav_"
         )
         return str(resp)
 
-    if incoming_msg in {"start", "consult", "diagnose"}:
-        msg.body(start_guided_session(from_user) + "\n\n_Executed By Aniket Yadav_")
+    if incoming_msg in {"start", "consult", "diagnose", "शुरू", "प्रारंभ"}:
+        lang = USER_LANGUAGE_PREF.get(from_user) or detect_language(request.values.get('Body', ''))
+        USER_LANGUAGE_PREF[from_user] = lang
+        msg.body(start_guided_session(from_user, lang=lang) + "\n\n_Executed By Aniket Yadav_")
         return str(resp)
 
     try:
@@ -542,7 +613,8 @@ def whatsapp_bot():
             current_step = get_current_step(from_user)
             ok, error_text = save_step_answer(from_user, current_step, request.values.get('Body', '').strip())
             if not ok:
-                msg.body(error_text + "\n\n" + STEP_PROMPTS.get(current_step, "Please continue.") + "\n\n_Executed By Aniket Yadav_")
+                session_lang = USER_SESSIONS.get(from_user, {}).get("lang", "en")
+                msg.body(error_text + "\n\n" + get_step_prompt(current_step, session_lang) + "\n\n_Executed By Aniket Yadav_")
                 return str(resp)
 
             session_data_now = USER_SESSIONS.get(from_user, {}).get("data", {})
@@ -622,7 +694,7 @@ def whatsapp_bot():
             else:
                 msg.body(
                     f"Hi {user_name}, I can help with multiple query styles.\n\n"
-                    + HELP_TEXT
+                    + get_help_text(USER_LANGUAGE_PREF.get(from_user, "en"))
                     + "\n\n"
                     "_Executed By Aniket Yadav_"
                 )
