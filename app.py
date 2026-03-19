@@ -104,6 +104,19 @@ EMERGENCY_KEYWORDS = [
     "self harm",
 ]
 
+SEVERE_RISK_SYMPTOMS = {
+    "chest pain",
+    "breathlessness",
+    "shortness of breath",
+    "difficulty breathing",
+    "stroke",
+    "pneumonia",
+    "dengue",
+    "malaria",
+    "typhoid",
+    "covid",
+}
+
 
 def parse_age(text):
     """Extract age from free text if present."""
@@ -225,6 +238,35 @@ def build_emergency_response(matched_signs, hospitals=None, location_label="your
 
     lines.append("\n_Executed By Aniket Yadav_")
     return "\n".join(lines)
+
+
+def should_escalate_guided(session_data):
+    """Escalate guided session when risk signals are detected."""
+    symptom = (session_data.get("symptom") or "").lower()
+    severity = (session_data.get("severity") or "").lower()
+    duration = (session_data.get("duration") or "").lower()
+    pain_reason = (session_data.get("pain_reason") or "").lower()
+    activities = (session_data.get("activities") or "").lower()
+
+    combined_text = " ".join([symptom, duration, pain_reason, activities]).strip()
+    matched = detect_emergency(combined_text)
+
+    if severity == "severe" and symptom in SEVERE_RISK_SYMPTOMS:
+        matched.append(f"severe {symptom}")
+
+    long_duration_tokens = ["week", "weeks", "month", "months", "15", "20", "30"]
+    if severity == "severe" and any(token in duration for token in long_duration_tokens):
+        matched.append("severe persistent symptoms")
+
+    # Unique while preserving order.
+    seen = set()
+    unique = []
+    for item in matched:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+
+    return unique
 
 
 def start_guided_session(user_id):
@@ -454,6 +496,28 @@ def whatsapp_bot():
             ok, error_text = save_step_answer(from_user, current_step, request.values.get('Body', '').strip())
             if not ok:
                 msg.body(error_text + "\n\n" + STEP_PROMPTS.get(current_step, "Please continue.") + "\n\n_Executed By Aniket Yadav_")
+                return str(resp)
+
+            session_data_now = USER_SESSIONS.get(from_user, {}).get("data", {})
+            risk_signs = should_escalate_guided(session_data_now)
+            if risk_signs:
+                USER_SESSIONS.pop(from_user, None)
+                hospitals = []
+                location_label = "your location"
+
+                if latitude and longitude:
+                    hospitals = find_nearest_hospitals(float(latitude), float(longitude), limit=5)
+                else:
+                    addr = shared_address or extract_address_from_text(incoming_msg)
+                    if addr:
+                        geo = geocode_address(addr)
+                        if geo:
+                            hospitals = find_nearest_hospitals(geo["lat"], geo["lon"], limit=5)
+                            location_label = addr
+
+                result = build_emergency_response(risk_signs, hospitals=hospitals, location_label=location_label)
+                msg.body(result)
+                print("✅ Guided flow escalated to emergency response!")
                 return str(resp)
 
             next_prompt = get_next_prompt(from_user)
