@@ -83,6 +83,27 @@ REASON_HINTS = {
     "insomnia": "Possible reasons include stress, excess screen time, and irregular sleep cycle.",
 }
 
+EMERGENCY_KEYWORDS = [
+    "chest pain",
+    "severe chest pain",
+    "breathlessness",
+    "shortness of breath",
+    "difficulty breathing",
+    "fainting",
+    "unconscious",
+    "stroke",
+    "one side weakness",
+    "slurred speech",
+    "seizure",
+    "fits",
+    "blood vomiting",
+    "vomiting blood",
+    "black stool",
+    "severe bleeding",
+    "suicidal",
+    "self harm",
+]
+
 
 def parse_age(text):
     """Extract age from free text if present."""
@@ -180,6 +201,29 @@ def format_hospital_response(hospitals, location_label="your location"):
             f"   • Distance: {hospital['distance_km']} km\n"
             f"   • Address: {hospital['address']}"
         )
+    return "\n".join(lines)
+
+
+def detect_emergency(text):
+    clean = (text or "").lower()
+    return [keyword for keyword in EMERGENCY_KEYWORDS if keyword in clean]
+
+
+def build_emergency_response(matched_signs, hospitals=None, location_label="your location"):
+    signs_text = ", ".join(matched_signs[:3]) if matched_signs else "critical symptoms"
+    lines = [
+        "🚨 *Emergency Alert*",
+        f"Detected red-flag signs: {signs_text}.",
+        "Please seek immediate medical care now.",
+        "Call local emergency services and do not delay treatment.",
+    ]
+
+    if hospitals:
+        lines.append("\n" + format_hospital_response(hospitals, location_label=location_label))
+    else:
+        lines.append("\nShare your WhatsApp location and I will send nearest hospitals immediately.")
+
+    lines.append("\n_Executed By Aniket Yadav_")
     return "\n".join(lines)
 
 
@@ -332,7 +376,11 @@ def whatsapp_bot():
     # 2. Flexible Greeting Logic (Handles Hi, Hello, etc.)
     greetings = ['hi', 'hello', 'hey', 'namaste', 'aayu', 'start', 'consult', 'diagnose']
     if any(re.search(rf"\b{re.escape(greet)}\b", incoming_msg) for greet in greetings):
-        msg.body(start_guided_session(from_user) + "\n\n_Executed By Aniket Yadav_")
+        msg.body(
+            start_guided_session(from_user)
+            + "\n\nEmergency support: if you type severe signs like `chest pain` or `difficulty breathing`, I will prioritize hospital guidance."
+            + "\n\n_Executed By Aniket Yadav_"
+        )
         return str(resp)
 
     try:
@@ -341,7 +389,28 @@ def whatsapp_bot():
             msg.body("Consultation cancelled. Type `start` to begin again.\n\n_Executed By Aniket Yadav_")
             return str(resp)
 
-        # 3. Hospital help via shared location or typed address.
+        # 3. Emergency triage mode always gets top priority.
+        emergency_signs = detect_emergency(incoming_msg)
+        if emergency_signs:
+            hospitals = []
+            location_label = "your location"
+
+            if latitude and longitude:
+                hospitals = find_nearest_hospitals(float(latitude), float(longitude), limit=5)
+            else:
+                addr = extract_address_from_text(incoming_msg) or shared_address
+                if addr:
+                    geo = geocode_address(addr)
+                    if geo:
+                        hospitals = find_nearest_hospitals(geo["lat"], geo["lon"], limit=5)
+                        location_label = addr
+
+            result = build_emergency_response(emergency_signs, hospitals=hospitals, location_label=location_label)
+            msg.body(result)
+            print("✅ Emergency triage response sent!")
+            return str(resp)
+
+        # 4. Hospital help via shared location or typed address.
         if latitude and longitude:
             hospitals = find_nearest_hospitals(float(latitude), float(longitude), limit=5)
             result = format_hospital_response(hospitals)
@@ -379,7 +448,7 @@ def whatsapp_bot():
             print("✅ Hospital response sent successfully!")
             return str(resp)
 
-        # 4. Guided consultation mode (step-by-step).
+        # 5. Guided consultation mode (step-by-step).
         if from_user in USER_SESSIONS:
             current_step = get_current_step(from_user)
             ok, error_text = save_step_answer(from_user, current_step, request.values.get('Body', '').strip())
@@ -398,7 +467,7 @@ def whatsapp_bot():
             print("✅ Guided assessment sent successfully!")
             return str(resp)
 
-        # 5. Structured format: Age, Symptom, Severity
+        # 6. Structured format: Age, Symptom, Severity
         if ',' in incoming_msg:
             parts = [p.strip() for p in incoming_msg.split(',')]
             
@@ -422,7 +491,7 @@ def whatsapp_bot():
             else:
                 msg.body("Format Error. Please use: *Age, Symptom, Severity*")
         else:
-            # 6. Natural language mode for paragraph-style inputs.
+            # 7. Natural language mode for paragraph-style inputs.
             age, symptom, severity = parse_natural_input(incoming_msg)
             local_data = get_ayurvedic_knowledge(symptom) if symptom else None
 
@@ -446,6 +515,7 @@ def whatsapp_bot():
                     "• `23, fever, mild`\n"
                     "• `I am 23 and I have severe headache for 2 days`\n"
                     "• `hospital near Noida Sector 62`\n\n"
+                    "Emergency example: `severe chest pain`\n\n"
                     "_Executed By Aniket Yadav_"
                 )
 
