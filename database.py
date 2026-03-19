@@ -3,10 +3,10 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import urllib.parse
 import urllib.request
 from difflib import get_close_matches
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 from google import genai
@@ -561,6 +561,30 @@ def build_non_ai_recommendation(symptom, age, severity, detailed=False, duration
     lines.append("⚠️ If symptoms are severe, persistent, or include emergency signs, visit nearest hospital immediately.")
     return "\n".join(lines)
 
+
+def generate_gemini_with_timeout(prompt, timeout_seconds=12):
+    """Call Gemini with a hard timeout without blocking webhook response."""
+    result_holder = {"response": None, "error": None}
+
+    def _worker():
+        try:
+            result_holder["response"] = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+        except Exception as err:
+            result_holder["error"] = err
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+
+    if thread.is_alive():
+        raise TimeoutError("Gemini request timed out")
+    if result_holder["error"] is not None:
+        raise result_holder["error"]
+    return result_holder["response"]
+
     return remedies
 
 
@@ -719,16 +743,9 @@ def get_ai_recommendation(symptom, age, severity):
         return build_non_ai_recommendation(symptom, age, severity, detailed=False)
 
     try:
-        # Enforce a hard timeout so webhook replies are never blocked for too long.
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                client.models.generate_content,
-                model="gemini-2.0-flash",
-                contents=prompt,
-            )
-            response = future.result(timeout=12)
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=12)
         return response.text
-    except FuturesTimeoutError:
+    except TimeoutError:
         print("❌ AI Timeout: falling back to local recommendation")
         return build_non_ai_recommendation(symptom, age, severity, detailed=False)
     except Exception as e:
@@ -772,16 +789,9 @@ def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason
         )
 
     try:
-        # Enforce a hard timeout so guided flow can complete reliably.
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                client.models.generate_content,
-                model="gemini-2.0-flash",
-                contents=prompt,
-            )
-            response = future.result(timeout=15)
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=15)
         return response.text
-    except FuturesTimeoutError:
+    except TimeoutError:
         print("❌ AI Detailed Timeout: falling back to local recommendation")
         return build_non_ai_recommendation(
             symptom,
