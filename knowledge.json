@@ -1,38 +1,284 @@
 {
   "fever": {
-    "medicine": "Paracetamol or Aspirin",
-    "home_remedy": "Tulsi leaves tea with honey",
-    "avoid": "Cold water, ice cream, oily food",
-    "lifestyle_tips": "Rest well, drink warm water, avoid exertion"
-  },
-  "cough": {
-    "medicine": "Honey with turmeric",
-    "home_remedy": "Ginger tea with lemon",
-    "avoid": "Dairy products, cold drinks",
-    "lifestyle_tips": "Keep throat warm, avoid dust, drink plenty of water"
-  },
-  "headache": {
-    "medicine": "Paracetamol or Ibuprofen",
-    "home_remedy": "Sandalwood paste on forehead",
-    "avoid": "Stress, loud noise, bright lights",
-    "lifestyle_tips": "Rest in dark room, apply cold compress, meditate"
+    "medicine": "Paracetamol (as advised)",
+    "home_remedy": "Tulsi and ginger herbal tea",
+    "avoid": "Cold drinks, junk food, overexertion",
+    "lifestyle_tips": "Rest, hydrate, monitor temperature"
   },
   "cold": {
-    "medicine": "Vitamin C tablets",
-    "home_remedy": "Ginger turmeric milk",
-    "avoid": "Cold foods, ice cream",
-    "lifestyle_tips": "Stay warm, get adequate sleep, use humidifier"
+    "medicine": "Steam inhalation and vitamin C support",
+    "home_remedy": "Turmeric milk and ajwain steam",
+    "avoid": "Cold exposure, ice cream",
+    "lifestyle_tips": "Warm fluids, proper sleep"
+  },
+  "cough": {
+    "medicine": "Honey with black pepper",
+    "home_remedy": "Mulethi and tulsi decoction",
+    "avoid": "Cold drinks, dust, smoking",
+    "lifestyle_tips": "Keep throat warm, sip warm water"
+  },
+  "sore throat": {
+    "medicine": "Salt water gargle and soothing lozenges",
+    "home_remedy": "Turmeric salt gargles",
+    "avoid": "Very cold and fried food",
+    "lifestyle_tips": "Voice rest and hydration"
+  },
+  "headache": {
+    "medicine": "Mild analgesic if required",
+    "home_remedy": "Peppermint oil on temples",
+    "avoid": "Dehydration, screen strain",
+    "lifestyle_tips": "Sleep regularly and stretch neck"
+  },
+  "migraine": {
+    "medicine": "Doctor-prescribed anti-migraine medicine",
+    "home_remedy": "Cold compress and quiet dark room",
+    "avoid": "Bright light, skipped meals, trigger foods",
+    "lifestyle_tips": "Maintain trigger diary and sleep cycle"
+  },
+  "sinusitis": {
+    "medicine": "Nasal saline and anti-allergy support",
+    "home_remedy": "Steam with eucalyptus",
+    "avoid": "Dust, smoke, cold winds",
+    "lifestyle_tips": "Keep sinuses moist"
+  },
+  "allergy": {
+    "medicine": "Antihistamine as advised",
+    "home_remedy": "Warm water with honey",
+    "avoid": "Known allergens, dust and pollen",
+    "lifestyle_tips": "Use mask outdoors during pollen season"
+  },
+  "asthma": {
+    "medicine": "Inhaler as prescribed",
+    "home_remedy": "Warm ginger tea (supportive)",
+    "avoid": "Dust, smoke, strong perfumes",
+    "lifestyle_tips": "Follow inhaler schedule and breathing exercises"
   },
   "acidity": {
-    "medicine": "Antacid tablets",
-    "home_remedy": "Coconut water and buttermilk",
-    "avoid": "Spicy food, citrus, caffeine",
-    "lifestyle_tips": "Eat light meals, avoid late night eating, maintain posture"
+    "medicine": "Antacid as advised",
+    "home_remedy": "Cold milk or coconut water",
+    "avoid": "Spicy, oily, and late-night heavy meals",
+    "lifestyle_tips": "Eat small frequent meals"
+  },
+  "gastritis": {
+    "medicine": "Acid reducer as advised",
+    "home_remedy": "Jeera water and bland diet",
+    "avoid": "Fried food, alcohol, excessive tea/coffee",
+    "lifestyle_tips": "Early dinner and stress control"
   },
   "indigestion": {
-    "medicine": "Digestive enzymes",
-    "home_remedy": "Ginger powder with warm water",
-    "avoid": "Heavy meals, fried foods",
-    "lifestyle_tips": "Chew slowly, walk after meals, drink water regularly"
+    "medicine": "Digestive enzymes if needed",
+    "home_remedy": "Ajwain with warm water",
+    "avoid": "Overeating and fast eating",
+    "lifestyle_tips": "Chew food properly and walk post meals"
+  },
+  "constipation": {
+    "medicine": "Mild laxative if prescribed",
+    "home_remedy": "Soaked raisins and warm water",
+    "avoid": "Low fiber diet and inactivity",
+    "lifestyle_tips": "Increase fiber and daily movement"
+  },
+  "diarrhea": {
+    "medicine": "ORS and zinc as advised",
+    "home_remedy": "Rice water and banana",
+    "avoid": "Street food and dairy during acute phase",
+    "lifestyle_tips": "Stay hydrated, watch dehydration signs"
+  },
+  "nausea": {
+    "medicine": "Anti-nausea medicine if needed",
+    "home_remedy": "Ginger lemon tea",
+    "avoid": "Greasy and strong-smelling food",
+    "lifestyle_tips": "Take small frequent meals"
+  },
+  "vomiting": {
+    "medicine": "ORS and antiemetic if prescribed",
+    "home_remedy": "Sips of ginger water",
+    "avoid": "Heavy meals and dehydration",
+    "lifestyle_tips": "Rest stomach and hydrate slowly"
+  },
+  "stomach pain": {
+    "medicine": "Antispasmodic as advised",
+    "home_remedy": "Warm fennel seed water",
+    "avoid": "Spicy and stale food",
+    "lifestyle_tips": "Eat simple home-cooked meals"
+  },
+  "ibs": {
+    "medicine": "Doctor-guided gut medication",
+    "home_remedy": "Buttermilk with roasted jeera",
+    "avoid": "Trigger foods and stress",
+    "lifestyle_tips": "Low-FODMAP style meal planning"
+  },
+  "piles": {
+    "medicine": "Topical relief medicine",
+    "home_remedy": "Warm sitz bath",
+    "avoid": "Constipation and prolonged sitting",
+    "lifestyle_tips": "Fiber-rich diet and hydration"
+  },
+  "diabetes": {
+    "medicine": "Anti-diabetic medicine as prescribed",
+    "home_remedy": "Fenugreek water (supportive)",
+    "avoid": "Refined sugar and sedentary routine",
+    "lifestyle_tips": "Track blood sugar and walk daily"
+  },
+  "hypertension": {
+    "medicine": "BP control medicine as prescribed",
+    "home_remedy": "Garlic and low-salt diet support",
+    "avoid": "High salt food and stress",
+    "lifestyle_tips": "Regular BP monitoring and exercise"
+  },
+  "hypotension": {
+    "medicine": "Electrolytes and doctor-guided support",
+    "home_remedy": "Salted lemon water",
+    "avoid": "Skipping meals and dehydration",
+    "lifestyle_tips": "Rise slowly and hydrate"
+  },
+  "anemia": {
+    "medicine": "Iron supplement as prescribed",
+    "home_remedy": "Beetroot and pomegranate juice",
+    "avoid": "Tea/coffee immediately after meals",
+    "lifestyle_tips": "Iron-rich diet with vitamin C"
+  },
+  "weakness": {
+    "medicine": "Multivitamin if advised",
+    "home_remedy": "Dates and soaked almonds",
+    "avoid": "Poor sleep and missed meals",
+    "lifestyle_tips": "Balanced diet and hydration"
+  },
+  "fatigue": {
+    "medicine": "Based on root cause",
+    "home_remedy": "Ashwagandha milk (if suitable)",
+    "avoid": "Overwork and irregular schedule",
+    "lifestyle_tips": "Sleep hygiene and stress control"
+  },
+  "insomnia": {
+    "medicine": "Sleep support as advised",
+    "home_remedy": "Warm milk with nutmeg",
+    "avoid": "Late caffeine and screen use at night",
+    "lifestyle_tips": "Fixed sleep and wake timing"
+  },
+  "anxiety": {
+    "medicine": "Professional mental health guidance",
+    "home_remedy": "Deep breathing and chamomile tea",
+    "avoid": "Excess caffeine and isolation",
+    "lifestyle_tips": "Mindfulness and routine exercise"
+  },
+  "stress": {
+    "medicine": "Counseling when needed",
+    "home_remedy": "Brahmi tea and breathing practice",
+    "avoid": "Sleep deprivation and overwork",
+    "lifestyle_tips": "Daily relaxation ritual"
+  },
+  "depression": {
+    "medicine": "Psychiatric consultation recommended",
+    "home_remedy": "Sun exposure and routine walking",
+    "avoid": "Isolation and alcohol",
+    "lifestyle_tips": "Seek support and structured routine"
+  },
+  "arthritis": {
+    "medicine": "Anti-inflammatory support as prescribed",
+    "home_remedy": "Turmeric and ginger in warm milk",
+    "avoid": "Prolonged inactivity",
+    "lifestyle_tips": "Joint-friendly exercise and weight control"
+  },
+  "joint pain": {
+    "medicine": "Pain-relief gel/tablet if advised",
+    "home_remedy": "Warm sesame oil massage",
+    "avoid": "High-impact strain",
+    "lifestyle_tips": "Stretching and posture care"
+  },
+  "back pain": {
+    "medicine": "Mild analgesic and physiotherapy advice",
+    "home_remedy": "Hot fomentation",
+    "avoid": "Poor posture and heavy lifting",
+    "lifestyle_tips": "Core strengthening and ergonomic seating"
+  },
+  "muscle pain": {
+    "medicine": "Topical analgesic",
+    "home_remedy": "Epsom salt warm compress",
+    "avoid": "Overexertion",
+    "lifestyle_tips": "Proper warm-up and recovery"
+  },
+  "dengue": {
+    "medicine": "Immediate doctor supervision",
+    "home_remedy": "Hydration and rest support",
+    "avoid": "Self-medication with unsafe painkillers",
+    "lifestyle_tips": "Monitor platelets and warning signs"
+  },
+  "typhoid": {
+    "medicine": "Doctor-prescribed antibiotics",
+    "home_remedy": "Soft bland diet",
+    "avoid": "Outside food and dehydration",
+    "lifestyle_tips": "Complete full treatment course"
+  },
+  "malaria": {
+    "medicine": "Anti-malarials as prescribed",
+    "home_remedy": "Hydration and rest",
+    "avoid": "Mosquito exposure",
+    "lifestyle_tips": "Use nets/repellents and monitor fever"
+  },
+  "covid": {
+    "medicine": "Doctor-guided symptomatic care",
+    "home_remedy": "Steam and warm fluids",
+    "avoid": "Crowded places during illness",
+    "lifestyle_tips": "Isolate and monitor oxygen"
+  },
+  "flu": {
+    "medicine": "Symptomatic treatment",
+    "home_remedy": "Warm soups and rest",
+    "avoid": "Cold exposure",
+    "lifestyle_tips": "Hydration and immunity-supporting diet"
+  },
+  "skin rash": {
+    "medicine": "Anti-allergy cream if advised",
+    "home_remedy": "Neem water rinse",
+    "avoid": "New harsh cosmetics",
+    "lifestyle_tips": "Keep skin clean and dry"
+  },
+  "eczema": {
+    "medicine": "Moisturizer and medicated cream",
+    "home_remedy": "Aloe vera gel",
+    "avoid": "Harsh soaps and hot water",
+    "lifestyle_tips": "Hydrate skin regularly"
+  },
+  "acne": {
+    "medicine": "Topical anti-acne gel",
+    "home_remedy": "Multani mitti mask",
+    "avoid": "Oily food and touching face frequently",
+    "lifestyle_tips": "Gentle cleansing and hydration"
+  },
+  "uti": {
+    "medicine": "Urine infection antibiotics if prescribed",
+    "home_remedy": "Coconut water and hydration",
+    "avoid": "Holding urine for long duration",
+    "lifestyle_tips": "Maintain hygiene and drink fluids"
+  },
+  "kidney stone": {
+    "medicine": "Doctor-guided pain and stone management",
+    "home_remedy": "Lemon water support",
+    "avoid": "Dehydration and high-oxalate excess",
+    "lifestyle_tips": "Increase daily water intake"
+  },
+  "pcos": {
+    "medicine": "Gynecologist-guided hormonal treatment",
+    "home_remedy": "Cinnamon tea support",
+    "avoid": "Sedentary lifestyle and excess sugar",
+    "lifestyle_tips": "Weight management and cycle tracking"
+  },
+  "menstrual cramps": {
+    "medicine": "Antispasmodic if needed",
+    "home_remedy": "Heat pad and fennel tea",
+    "avoid": "Excess caffeine",
+    "lifestyle_tips": "Light exercise and sleep"
+  },
+  "thyroid": {
+    "medicine": "Thyroid medicine as prescribed",
+    "home_remedy": "Selenium-rich diet support",
+    "avoid": "Missing daily thyroid medication",
+    "lifestyle_tips": "Regular thyroid profile checks"
+  },
+  "hemorrhoids": {
+    "medicine": "Topical relief and stool softener",
+    "home_remedy": "Warm sitz bath",
+    "avoid": "Straining during bowel movement",
+    "lifestyle_tips": "Fiber and hydration"
   }
 }

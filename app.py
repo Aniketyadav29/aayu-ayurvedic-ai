@@ -6,18 +6,29 @@ from dotenv import load_dotenv
 
 # Try to import your logic from database.py
 try:
-    from database import get_ayurvedic_knowledge, get_ai_recommendation
+    from database import (
+        get_ayurvedic_knowledge,
+        get_ai_recommendation,
+        get_all_symptoms,
+        find_best_symptom,
+        geocode_address,
+        find_nearest_hospitals,
+    )
 except ImportError:
     print("⚠️ database.py not found! Using demo mode.")
     def get_ayurvedic_knowledge(x): return None
     def get_ai_recommendation(s, a, v): return "AI logic is currently offline."
+    def get_all_symptoms(): return ()
+    def find_best_symptom(text): return None
+    def geocode_address(address): return None
+    def find_nearest_hospitals(lat, lon, limit=5): return []
 
 # Load your .env file (API Keys)
 load_dotenv()
 
 app = Flask(__name__)
 
-KNOWN_SYMPTOMS = (
+KNOWN_SYMPTOMS = get_all_symptoms() or (
     "fever",
     "cough",
     "headache",
@@ -70,6 +81,11 @@ def parse_severity(text):
 
 def parse_symptom(text):
     """Infer known symptom from free-form text."""
+    text = (text or "").lower().strip()
+    db_match = find_best_symptom(text)
+    if db_match:
+        return db_match
+
     for symptom in KNOWN_SYMPTOMS:
         if re.search(rf"\b{re.escape(symptom)}\b", text):
             return symptom
@@ -104,6 +120,43 @@ def parse_natural_input(incoming_msg):
     symptom = parse_symptom(incoming_msg)
     return age, symptom, severity
 
+
+def user_wants_hospital_help(text):
+    keywords = ["hospital", "doctor", "clinic", "nearest hospital", "nearby hospital", "emergency"]
+    return any(keyword in text for keyword in keywords)
+
+
+def extract_address_from_text(text):
+    patterns = [
+        r"hospital near (.+)",
+        r"nearest hospital near (.+)",
+        r"find hospital in (.+)",
+        r"hospital in (.+)",
+        r"doctor near (.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip(" .,")
+    return None
+
+
+def format_hospital_response(hospitals, location_label="your location"):
+    if not hospitals:
+        return (
+            "I could not find nearby hospitals right now.\n"
+            "Please try again with a clearer address or share your WhatsApp location."
+        )
+
+    lines = [f"🏥 *Nearest Hospitals near {location_label}*:\n"]
+    for index, hospital in enumerate(hospitals, start=1):
+        lines.append(
+            f"{index}. *{hospital['name']}*\n"
+            f"   • Distance: {hospital['distance_km']} km\n"
+            f"   • Address: {hospital['address']}"
+        )
+    return "\n".join(lines)
+
 @app.route("/", methods=['GET'])
 def home():
     """Verify if the server is live in your browser."""
@@ -128,6 +181,9 @@ def whatsapp_bot():
     print("\n--- 🚀 NEW MESSAGE RECEIVED ---")
     incoming_msg = request.values.get('Body', '').strip().lower()
     print(f"📩 Content: '{incoming_msg}'")
+    latitude = request.values.get("Latitude")
+    longitude = request.values.get("Longitude")
+    shared_address = request.values.get("Address") or request.values.get("Label")
 
     resp = MessagingResponse()
     msg = resp.message()
@@ -139,18 +195,60 @@ def whatsapp_bot():
             "Welcome to AAYU Ayurvedic AI! 🌿\n\n"
             "You can message in any style:\n"
             "• Structured: *23, fever, mild*\n"
-            "• Natural text: *I am 23 and I have severe fever since morning*\n\n"
+            "• Natural text: *I am 23 and I have severe fever since morning*\n"
+            "• Hospital help: *hospital near Andheri West Mumbai*\n"
+            "• Or share your WhatsApp location for nearest hospitals\n\n"
             "_Executed By Aniket Yadav_"
         )
         return str(resp)
 
     try:
-        # 3. Structured format: Age, Symptom, Severity
+        # 3. Hospital help via shared location or typed address.
+        if latitude and longitude:
+            hospitals = find_nearest_hospitals(float(latitude), float(longitude), limit=5)
+            result = format_hospital_response(hospitals)
+            result += "\n\n_Executed By Aniket Yadav_"
+            msg.body(result)
+            print("✅ Hospital response sent successfully!")
+            return str(resp)
+
+        if user_wants_hospital_help(incoming_msg):
+            address = extract_address_from_text(incoming_msg) or shared_address
+
+            if not address:
+                msg.body(
+                    "To find nearest hospitals, please either:\n"
+                    "1) Share your WhatsApp location, or\n"
+                    "2) Type: `hospital near <your address>`\n"
+                    "Example: `hospital near Noida Sector 62`\n\n"
+                    "_Executed By Aniket Yadav_"
+                )
+                return str(resp)
+
+            geo = geocode_address(address)
+            if not geo:
+                msg.body(
+                    "I could not understand that address.\n"
+                    "Try with a fuller location, e.g. `hospital near Andheri West Mumbai`\n\n"
+                    "_Executed By Aniket Yadav_"
+                )
+                return str(resp)
+
+            hospitals = find_nearest_hospitals(geo["lat"], geo["lon"], limit=5)
+            result = format_hospital_response(hospitals, location_label=address)
+            result += "\n\n_Executed By Aniket Yadav_"
+            msg.body(result)
+            print("✅ Hospital response sent successfully!")
+            return str(resp)
+
+        # 4. Structured format: Age, Symptom, Severity
         if ',' in incoming_msg:
             parts = [p.strip() for p in incoming_msg.split(',')]
             
             if len(parts) >= 3:
-                age, symptom, severity = parts[0], parts[1], parts[2]
+                age = parts[0]
+                symptom = parse_symptom(parts[1]) or parts[1]
+                severity = parts[2]
                 print(f"🧩 Processing: {symptom} for age {age}...")
 
                 # Check Local Database
@@ -167,7 +265,7 @@ def whatsapp_bot():
             else:
                 msg.body("Format Error. Please use: *Age, Symptom, Severity*")
         else:
-            # 4. Natural language mode for paragraph-style inputs.
+            # 5. Natural language mode for paragraph-style inputs.
             age, symptom, severity = parse_natural_input(incoming_msg)
             local_data = get_ayurvedic_knowledge(symptom) if symptom else None
 
@@ -189,7 +287,8 @@ def whatsapp_bot():
                     "Please explain your condition in one of these styles:\n"
                     "• `23, fever, mild`\n"
                     "• `I am 23 and I have severe headache for 2 days`\n"
-                    "• `fever`\n\n"
+                    "• `fever`\n"
+                    "• `hospital near Noida Sector 62`\n\n"
                     "_Executed By Aniket Yadav_"
                 )
 
