@@ -71,6 +71,24 @@ STEP_PROMPTS = {
     "activities": "Step 6/6: Tell me your recent activities/routine (sleep, food, work, exercise).",
 }
 
+HELP_TEXT = (
+    "📘 *How to use AAYU*\n"
+    "1) Step-by-step consultation: type `start`\n"
+    "2) Quick structured query: `Age, Symptom, Severity`\n"
+    "   Example: `23, fever, mild`\n"
+    "3) Natural paragraph query:\n"
+    "   Example: `I am 23 and I have severe headache for 2 days`\n"
+    "4) Direct symptom query:\n"
+    "   Example: `migraine`\n"
+    "5) Nearest hospitals by address:\n"
+    "   Example: `hospital near Noida Sector 62`\n"
+    "6) Nearest hospitals by live location: share WhatsApp location\n"
+    "7) Emergency support:\n"
+    "   Example: `severe chest pain and difficulty breathing`\n"
+    "8) Stop consultation: type `cancel`\n"
+    "9) Show this menu again: type `help`"
+)
+
 REASON_HINTS = {
     "headache": "Possible reasons include stress, dehydration, poor sleep, or long screen time.",
     "migraine": "Possible triggers include bright light, fasting, stress, and sleep disturbance.",
@@ -281,6 +299,21 @@ def start_guided_session(user_id):
     )
 
 
+def get_user_display_name(request_values):
+    """Get best available display name from Twilio request payload."""
+    profile_name = (request_values.get("ProfileName") or "").strip()
+    if profile_name:
+        return profile_name
+
+    from_user = (request_values.get("From") or "").strip()
+    if from_user:
+        # Fallback: use masked sender identifier.
+        short = from_user[-4:] if len(from_user) >= 4 else from_user
+        return f"User {short}"
+
+    return "Friend"
+
+
 def get_current_step(user_id):
     session = USER_SESSIONS.get(user_id)
     if not session:
@@ -408,6 +441,7 @@ def whatsapp_bot():
     incoming_msg = request.values.get('Body', '').strip().lower()
     print(f"📩 Content: '{incoming_msg}'")
     from_user = request.values.get("From", "unknown")
+    user_name = get_user_display_name(request.values)
     latitude = request.values.get("Latitude")
     longitude = request.values.get("Longitude")
     shared_address = request.values.get("Address") or request.values.get("Label")
@@ -416,13 +450,26 @@ def whatsapp_bot():
     msg = resp.message()
 
     # 2. Flexible Greeting Logic (Handles Hi, Hello, etc.)
-    greetings = ['hi', 'hello', 'hey', 'namaste', 'aayu', 'start', 'consult', 'diagnose']
+    greetings = ['hi', 'hello', 'hey', 'namaste', 'aayu']
     if any(re.search(rf"\b{re.escape(greet)}\b", incoming_msg) for greet in greetings):
         msg.body(
-            start_guided_session(from_user)
-            + "\n\nEmergency support: if you type severe signs like `chest pain` or `difficulty breathing`, I will prioritize hospital guidance."
+            f"Welcome {user_name}! 🌿\n\n"
+            + HELP_TEXT
+            + "\n\nTip: type `start` to begin guided consultation now."
             + "\n\n_Executed By Aniket Yadav_"
         )
+        return str(resp)
+
+    if incoming_msg in {"help", "menu", "instructions", "guide"}:
+        msg.body(
+            f"Hi {user_name}!\n\n"
+            + HELP_TEXT
+            + "\n\n_Executed By Aniket Yadav_"
+        )
+        return str(resp)
+
+    if incoming_msg in {"start", "consult", "diagnose"}:
+        msg.body(start_guided_session(from_user) + "\n\n_Executed By Aniket Yadav_")
         return str(resp)
 
     try:
@@ -574,12 +621,9 @@ def whatsapp_bot():
                 msg.body(result)
             else:
                 msg.body(
-                    "Type `start` for step-by-step consultation.\n"
-                    "Or use these quick styles:\n"
-                    "• `23, fever, mild`\n"
-                    "• `I am 23 and I have severe headache for 2 days`\n"
-                    "• `hospital near Noida Sector 62`\n\n"
-                    "Emergency example: `severe chest pain`\n\n"
+                    f"Hi {user_name}, I can help with multiple query styles.\n\n"
+                    + HELP_TEXT
+                    + "\n\n"
                     "_Executed By Aniket Yadav_"
                 )
 
