@@ -9,6 +9,7 @@ try:
     from database import (
         get_ayurvedic_knowledge,
         get_ai_recommendation,
+        get_ai_detailed_recommendation,
         get_all_symptoms,
         find_best_symptom,
         geocode_address,
@@ -18,6 +19,7 @@ except ImportError:
     print("⚠️ database.py not found! Using demo mode.")
     def get_ayurvedic_knowledge(x): return None
     def get_ai_recommendation(s, a, v): return "AI logic is currently offline."
+    def get_ai_detailed_recommendation(s, a, sev, d, r, act): return "Detailed AI logic is currently offline."
     def get_all_symptoms(): return ()
     def find_best_symptom(text): return None
     def geocode_address(address): return None
@@ -56,6 +58,29 @@ SEVERITY_KEYWORDS = {
     "mild": ["mild", "light", "slight", "low"],
     "moderate": ["moderate", "medium", "normal"],
     "severe": ["severe", "high", "intense", "critical", "serious", "worst"],
+}
+
+USER_SESSIONS = {}
+GUIDED_STEPS = ["age", "symptom", "duration", "severity", "pain_reason", "activities"]
+STEP_PROMPTS = {
+    "age": "Step 1/6: Please enter your age (example: 28)",
+    "symptom": "Step 2/6: What is your main symptom or disease?",
+    "duration": "Step 3/6: Since when are you facing this problem? (example: 2 days / 1 week)",
+    "severity": "Step 4/6: How severe is it? (mild / moderate / severe)",
+    "pain_reason": "Step 5/6: What do you think triggered it? (example: cold food, stress, long screen time)",
+    "activities": "Step 6/6: Tell me your recent activities/routine (sleep, food, work, exercise).",
+}
+
+REASON_HINTS = {
+    "headache": "Possible reasons include stress, dehydration, poor sleep, or long screen time.",
+    "migraine": "Possible triggers include bright light, fasting, stress, and sleep disturbance.",
+    "acidity": "Likely linked with spicy/oily food, irregular meals, stress, or late-night eating.",
+    "gastritis": "Likely linked with acidic food, stress, or prolonged empty stomach.",
+    "cough": "Possible reasons include throat irritation, allergy, viral infection, or dust exposure.",
+    "cold": "Possible reasons include viral infection, weather change, or low immunity.",
+    "back pain": "Possible reasons include poor posture, prolonged sitting, or muscle strain.",
+    "joint pain": "Possible reasons include inflammation, overuse, stiffness, or vitamin deficiency.",
+    "insomnia": "Possible reasons include stress, excess screen time, and irregular sleep cycle.",
 }
 
 
@@ -157,6 +182,121 @@ def format_hospital_response(hospitals, location_label="your location"):
         )
     return "\n".join(lines)
 
+
+def start_guided_session(user_id):
+    USER_SESSIONS[user_id] = {
+        "step_index": 0,
+        "data": {},
+    }
+    return (
+        "🩺 Starting step-by-step consultation.\n"
+        "You can type `cancel` anytime to stop.\n\n"
+        f"{STEP_PROMPTS['age']}"
+    )
+
+
+def get_current_step(user_id):
+    session = USER_SESSIONS.get(user_id)
+    if not session:
+        return None
+    return GUIDED_STEPS[session["step_index"]]
+
+
+def get_next_prompt(user_id):
+    session = USER_SESSIONS.get(user_id)
+    if not session:
+        return None
+
+    session["step_index"] += 1
+    if session["step_index"] >= len(GUIDED_STEPS):
+        return None
+
+    return STEP_PROMPTS[GUIDED_STEPS[session["step_index"]]]
+
+
+def save_step_answer(user_id, step, answer):
+    session = USER_SESSIONS.get(user_id)
+    if not session:
+        return False, "Session expired. Please type `start` to begin again."
+
+    answer = answer.strip()
+    if step == "age":
+        if not re.fullmatch(r"\d{1,3}", answer):
+            return False, "Please enter a valid age in numbers only (example: 28)."
+        age_num = int(answer)
+        if age_num < 1 or age_num > 120:
+            return False, "Please enter a realistic age between 1 and 120."
+        session["data"][step] = str(age_num)
+        return True, None
+
+    if step == "severity":
+        sev = parse_severity(answer.lower())
+        session["data"][step] = sev
+        return True, None
+
+    if step == "symptom":
+        normalized = parse_symptom(answer.lower()) or answer.lower()
+        session["data"][step] = normalized
+        return True, None
+
+    session["data"][step] = answer
+    return True, None
+
+
+def infer_reason_text(symptom, severity, duration, pain_reason, activities):
+    symptom_key = (symptom or "").lower()
+    base = REASON_HINTS.get(symptom_key, "Likely causes can include lifestyle, diet, stress, immunity, or posture factors.")
+
+    activity_notes = []
+    activities_l = (activities or "").lower()
+    if "screen" in activities_l or "laptop" in activities_l or "mobile" in activities_l:
+        activity_notes.append("high screen time")
+    if "stress" in activities_l or "tension" in activities_l:
+        activity_notes.append("stress load")
+    if "sleep" in activities_l and ("less" in activities_l or "poor" in activities_l):
+        activity_notes.append("insufficient sleep")
+    if "exercise" in activities_l and ("no" in activities_l or "not" in activities_l):
+        activity_notes.append("low physical activity")
+
+    lines = [f"• {base}"]
+    if pain_reason:
+        lines.append(f"• User-reported trigger: {pain_reason}.")
+    if duration:
+        lines.append(f"• Duration noted: {duration} (longer duration may require medical review).")
+    if severity == "severe":
+        lines.append("• Severity is high, so immediate medical consultation is advised.")
+    if activity_notes:
+        lines.append(f"• Activity factors observed: {', '.join(activity_notes)}.")
+
+    return "\n".join(lines)
+
+
+def build_guided_assessment(session_data):
+    age = session_data.get("age", "not provided")
+    symptom = session_data.get("symptom", "unknown")
+    duration = session_data.get("duration", "not provided")
+    severity = session_data.get("severity", "moderate")
+    pain_reason = session_data.get("pain_reason", "not provided")
+    activities = session_data.get("activities", "not provided")
+
+    local_data = get_ayurvedic_knowledge(symptom)
+    reason_text = infer_reason_text(symptom, severity, duration, pain_reason, activities)
+
+    if local_data:
+        result = build_local_record(symptom, local_data, include_footer=False)
+        result += "\n🧠 *Possible Reason of Pain*:\n"
+        result += reason_text
+        result += "\n\n🏃 *Activity-Based Advice*:\n"
+        result += f"• Based on your routine: {activities}\n"
+        result += "• Keep hydration, sleep, and daily movement consistent.\n"
+        result += "• If symptoms worsen or continue, visit a doctor/hospital.\n"
+        result += "\n_Executed By Aniket Yadav_"
+        return result
+
+    result = get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason, activities)
+    result += "\n\n_Executed By Aniket Yadav_"
+    return result
+
 @app.route("/", methods=['GET'])
 def home():
     """Verify if the server is live in your browser."""
@@ -181,6 +321,7 @@ def whatsapp_bot():
     print("\n--- 🚀 NEW MESSAGE RECEIVED ---")
     incoming_msg = request.values.get('Body', '').strip().lower()
     print(f"📩 Content: '{incoming_msg}'")
+    from_user = request.values.get("From", "unknown")
     latitude = request.values.get("Latitude")
     longitude = request.values.get("Longitude")
     shared_address = request.values.get("Address") or request.values.get("Label")
@@ -189,20 +330,17 @@ def whatsapp_bot():
     msg = resp.message()
 
     # 2. Flexible Greeting Logic (Handles Hi, Hello, etc.)
-    greetings = ['hi', 'hello', 'hey', 'namaste', 'aayu']
+    greetings = ['hi', 'hello', 'hey', 'namaste', 'aayu', 'start', 'consult', 'diagnose']
     if any(re.search(rf"\b{re.escape(greet)}\b", incoming_msg) for greet in greetings):
-        msg.body(
-            "Welcome to AAYU Ayurvedic AI! 🌿\n\n"
-            "You can message in any style:\n"
-            "• Structured: *23, fever, mild*\n"
-            "• Natural text: *I am 23 and I have severe fever since morning*\n"
-            "• Hospital help: *hospital near Andheri West Mumbai*\n"
-            "• Or share your WhatsApp location for nearest hospitals\n\n"
-            "_Executed By Aniket Yadav_"
-        )
+        msg.body(start_guided_session(from_user) + "\n\n_Executed By Aniket Yadav_")
         return str(resp)
 
     try:
+        if incoming_msg in {"cancel", "stop", "exit"} and from_user in USER_SESSIONS:
+            USER_SESSIONS.pop(from_user, None)
+            msg.body("Consultation cancelled. Type `start` to begin again.\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
         # 3. Hospital help via shared location or typed address.
         if latitude and longitude:
             hospitals = find_nearest_hospitals(float(latitude), float(longitude), limit=5)
@@ -241,7 +379,26 @@ def whatsapp_bot():
             print("✅ Hospital response sent successfully!")
             return str(resp)
 
-        # 4. Structured format: Age, Symptom, Severity
+        # 4. Guided consultation mode (step-by-step).
+        if from_user in USER_SESSIONS:
+            current_step = get_current_step(from_user)
+            ok, error_text = save_step_answer(from_user, current_step, request.values.get('Body', '').strip())
+            if not ok:
+                msg.body(error_text + "\n\n" + STEP_PROMPTS.get(current_step, "Please continue.") + "\n\n_Executed By Aniket Yadav_")
+                return str(resp)
+
+            next_prompt = get_next_prompt(from_user)
+            if next_prompt:
+                msg.body(next_prompt + "\n\n_Executed By Aniket Yadav_")
+                return str(resp)
+
+            session_data = USER_SESSIONS.pop(from_user, {}).get("data", {})
+            result = build_guided_assessment(session_data)
+            msg.body(result)
+            print("✅ Guided assessment sent successfully!")
+            return str(resp)
+
+        # 5. Structured format: Age, Symptom, Severity
         if ',' in incoming_msg:
             parts = [p.strip() for p in incoming_msg.split(',')]
             
@@ -265,7 +422,7 @@ def whatsapp_bot():
             else:
                 msg.body("Format Error. Please use: *Age, Symptom, Severity*")
         else:
-            # 5. Natural language mode for paragraph-style inputs.
+            # 6. Natural language mode for paragraph-style inputs.
             age, symptom, severity = parse_natural_input(incoming_msg)
             local_data = get_ayurvedic_knowledge(symptom) if symptom else None
 
@@ -284,10 +441,10 @@ def whatsapp_bot():
                 msg.body(result)
             else:
                 msg.body(
-                    "Please explain your condition in one of these styles:\n"
+                    "Type `start` for step-by-step consultation.\n"
+                    "Or use these quick styles:\n"
                     "• `23, fever, mild`\n"
                     "• `I am 23 and I have severe headache for 2 days`\n"
-                    "• `fever`\n"
                     "• `hospital near Noida Sector 62`\n\n"
                     "_Executed By Aniket Yadav_"
                 )

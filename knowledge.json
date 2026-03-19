@@ -280,5 +280,119 @@
     "home_remedy": "Warm sitz bath",
     "avoid": "Straining during bowel movement",
     "lifestyle_tips": "Fiber and hydration"
+  },
+  "bronchitis": {
+    "medicine": "Doctor-prescribed bronchodilator or supportive medicine",
+    "home_remedy": "Steam inhalation with warm fluids",
+    "avoid": "Smoke, dust, and cold exposure",
+    "lifestyle_tips": "Rest lungs and follow breathing exercises"
+  },
+  "pneumonia": {
+    "medicine": "Immediate clinical treatment as prescribed",
+    "home_remedy": "Supportive hydration and rest",
+    "avoid": "Self-medication and delayed treatment",
+    "lifestyle_tips": "Seek urgent care if breathing worsens"
+  },
+  "vertigo": {
+    "medicine": "Anti-vertigo medicine as advised",
+    "home_remedy": "Hydration and head-position rest",
+    "avoid": "Sudden head movements",
+    "lifestyle_tips": "Sleep well and move slowly"
+  },
+  "ear pain": {
+    "medicine": "Ear-drop/analgesic as prescribed",
+    "home_remedy": "Warm compress around ear",
+    "avoid": "Inserting objects into ear",
+    "lifestyle_tips": "Keep ear dry and clean"
+  },
+  "toothache": {
+    "medicine": "Dental analgesic and dental checkup",
+    "home_remedy": "Clove oil spot application",
+    "avoid": "Very sugary and very cold foods",
+    "lifestyle_tips": "Maintain oral hygiene and timely dental visit"
+  },
+  "eye strain": {
+    "medicine": "Lubricating drops if advised",
+    "home_remedy": "Cold water eye wash",
+    "avoid": "Prolonged unbroken screen exposure",
+    "lifestyle_tips": "Use 20-20-20 eye rule"
+  },
+  "cervical pain": {
+    "medicine": "Physiotherapy-guided pain management",
+    "home_remedy": "Warm compress and gentle stretches",
+    "avoid": "Poor neck posture",
+    "lifestyle_tips": "Ergonomic workstation and breaks"
+  },
+  "sciatica": {
+    "medicine": "Doctor-guided nerve pain treatment",
+    "home_remedy": "Heat therapy and stretching",
+    "avoid": "Long sitting and sudden bending",
+    "lifestyle_tips": "Back strengthening exercises"
+  },
+  "sprain": {
+    "medicine": "Pain-relief support as advised",
+    "home_remedy": "RICE (rest, ice, compression, elevation)",
+    "avoid": "Weight-bearing too early",
+    "lifestyle_tips": "Gradual recovery exercises"
+  },
+  "dehydration": {
+    "medicine": "ORS and fluid correction",
+    "home_remedy": "Coconut water and lemon salt water",
+    "avoid": "Excess heat without hydration",
+    "lifestyle_tips": "Regular fluid intake schedule"
+  },
+  "obesity": {
+    "medicine": "Clinical weight management if needed",
+    "home_remedy": "High-fiber satvik meals",
+    "avoid": "Processed sugar and sedentary routine",
+    "lifestyle_tips": "Daily exercise and calorie awareness"
+  },
+  "hypothyroidism": {
+    "medicine": "Thyroid hormone replacement as prescribed",
+    "home_remedy": "Balanced iodine and selenium diet",
+    "avoid": "Skipping thyroid medicine",
+    "lifestyle_tips": "Routine thyroid monitoring"
+  },
+  "hyperthyroidism": {
+    "medicine": "Anti-thyroid treatment as advised",
+    "home_remedy": "Stress reduction and cooling diet",
+    "avoid": "Excess caffeine and unmanaged stress",
+    "lifestyle_tips": "Regular endocrinology follow-up"
+  },
+  "allergic rhinitis": {
+    "medicine": "Antihistamine/nasal spray as advised",
+    "home_remedy": "Saline nasal rinse",
+    "avoid": "Dust, pollen, and smoke",
+    "lifestyle_tips": "Mask use in trigger environments"
+  },
+  "tonsillitis": {
+    "medicine": "Doctor-guided anti-inflammatory or antibiotic",
+    "home_remedy": "Warm saline gargle",
+    "avoid": "Very cold or spicy foods",
+    "lifestyle_tips": "Hydration and voice rest"
+  },
+  "peptic ulcer": {
+    "medicine": "Acid-control treatment as prescribed",
+    "home_remedy": "Soft bland meals in small portions",
+    "avoid": "Spicy foods, smoking, alcohol",
+    "lifestyle_tips": "Stress management and meal timing"
+  },
+  "gout": {
+    "medicine": "Uric acid control medicine as advised",
+    "home_remedy": "Hydration and cherry support diet",
+    "avoid": "High-purine red meat and alcohol",
+    "lifestyle_tips": "Weight control and joint rest"
+  },
+  "viral infection": {
+    "medicine": "Symptomatic treatment and rest",
+    "home_remedy": "Tulsi-ginger decoction",
+    "avoid": "Physical overexertion",
+    "lifestyle_tips": "Hydration, sleep, and isolation if contagious"
+  },
+  "heat stroke": {
+    "medicine": "Urgent cooling and medical care",
+    "home_remedy": "Cool fluids and shaded rest",
+    "avoid": "Direct sun exposure during peak hours",
+    "lifestyle_tips": "Electrolyte hydration in summer"
   }
 }

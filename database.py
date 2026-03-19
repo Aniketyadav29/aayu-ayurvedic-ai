@@ -225,3 +225,41 @@ def get_ai_recommendation(symptom, age, severity):
         print(f"❌ AI Error: {e}")
         return "⚠️ Connection to Ayurvedic AI lost. Try ginger tea while I reconnect!"
 
+
+def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason, activities):
+    """Generate detailed recommendation for guided step-by-step consultation."""
+    prompt = f"""
+    You are an Ayurvedic Consultant for 'AAYU'.
+    Patient profile:
+    - Age: {age}
+    - Main symptom/condition: {symptom}
+    - Severity: {severity}
+    - Duration: {duration}
+    - Suspected reason of pain: {pain_reason}
+    - Recent activities: {activities}
+
+    Give a concise, practical response in this exact structure:
+    🌿 AAYU Guided Assessment
+    1. Probable Reason:
+    2. Medicine Support (general):
+    3. Home Remedy:
+    4. Activity/Lifestyle Changes:
+    5. Diet Advice:
+    6. Red-Flag Warning (when to visit hospital immediately):
+
+    Keep the response user-friendly and safe.
+    """
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        print(f"❌ AI Detailed Error: {e}")
+        return (
+            "⚠️ I could not generate a full guided assessment right now.\n"
+            "Please rest, stay hydrated, and if symptoms are severe or persistent, visit the nearest hospital."
+        )
+
