@@ -826,7 +826,7 @@ def send_due_reminders():
 
     return {"status": "ok", "checked": len(due), "sent": sent_count, "failed": failed}, 200
 
-@app.route("/whatsapp", methods=['POST'])
+@app.route("/whatsapp", methods=['POST', 'GET'])
 def whatsapp_bot():
     # 1. Capture incoming message
     print("\n--- 🚀 NEW MESSAGE RECEIVED ---")
