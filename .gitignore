@@ -50,6 +50,7 @@ htmlcov/
 
 # Logs
 *.log
+reminders.db
 
 # Sensitive data
 credentials.json

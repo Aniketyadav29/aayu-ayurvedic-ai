@@ -1,7 +1,9 @@
 import os
 import re
+from datetime import datetime, timedelta
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
 from dotenv import load_dotenv
 
 # Try to import your logic from database.py
@@ -19,6 +21,11 @@ try:
         explain_condition_styles,
         knowledge_graph_links,
         update_health_tracker,
+        upsert_daily_reminder,
+        disable_daily_reminder,
+        get_user_daily_reminder,
+        get_due_daily_reminders,
+        mark_daily_reminder_sent,
         geocode_address,
         find_nearest_hospitals,
     )
@@ -36,6 +43,11 @@ except ImportError:
     def explain_condition_styles(condition): return None
     def knowledge_graph_links(topic): return []
     def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, today=None): return {"streak": 0, "badges": [], "good_day": False}
+    def upsert_daily_reminder(user_id, phone, reminder_time, reminder_message): return None
+    def disable_daily_reminder(user_id): return False
+    def get_user_daily_reminder(user_id): return None
+    def get_due_daily_reminders(current_time, current_date): return []
+    def mark_daily_reminder_sent(user_id, current_date): return None
     def geocode_address(address): return None
     def find_nearest_hospitals(lat, lon, limit=5): return []
 
@@ -43,6 +55,12 @@ except ImportError:
 load_dotenv()
 
 app = Flask(__name__)
+
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+REMINDER_CRON_TOKEN = os.getenv("REMINDER_CRON_TOKEN", "")
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else None
 
 KNOWN_SYMPTOMS = get_all_symptoms() or (
     "fever",
@@ -120,8 +138,11 @@ HELP_TEXT_EN = (
     "   Example: `explain acidity`\n"
     "13) Knowledge graph links:\n"
     "   Example: `graph acidity`\n"
-    "14) Stop consultation: type `cancel`\n"
-    "15) Show this menu again: type `help`"
+    "14) Daily reminder setup:\n"
+    "   Example: `reminder at 08:00 drink warm water`\n"
+    "15) Stop reminder: `reminder off`\n"
+    "16) Stop consultation: type `cancel`\n"
+    "17) Show this menu again: type `help`"
 )
 
 HELP_TEXT_HI = (
@@ -149,8 +170,11 @@ HELP_TEXT_HI = (
     "   उदाहरण: `explain acidity`\n"
     "13) Knowledge graph:\n"
     "   उदाहरण: `graph acidity`\n"
-    "14) कंसल्टेशन रोकने के लिए: `cancel`\n"
-    "15) यह मेनू फिर से देखने के लिए: `help`"
+    "14) डेली रिमाइंडर सेट करें:\n"
+    "   उदाहरण: `reminder at 08:00 drink warm water`\n"
+    "15) रिमाइंडर बंद करें: `reminder off`\n"
+    "16) कंसल्टेशन रोकने के लिए: `cancel`\n"
+    "17) यह मेनू फिर से देखने के लिए: `help`"
 )
 
 REASON_HINTS = {
@@ -358,6 +382,49 @@ def format_graph_links(topic, links, lang):
     for item in links:
         lines.append(f"• {item.get('from')} --{item.get('type')}--> {item.get('to')}")
     return "\n".join(lines)
+
+
+def parse_daily_reminder_command(text):
+    """Parse reminder commands.
+
+    Supported:
+    - reminder on
+    - reminder off
+    - reminder at 08:30 drink warm water
+    - remind me daily at 09:00 take tulsi tea
+    """
+    text = (text or "").strip().lower()
+
+    if text in {"reminder on", "daily reminder on"}:
+        return {"action": "on", "time": "08:00", "message": "Time for your daily Ayurveda self-care check: hydrate, breathe, and eat warm food."}
+
+    if text in {"reminder off", "daily reminder off", "stop reminder"}:
+        return {"action": "off"}
+
+    m = re.search(r"(?:reminder at|daily reminder at|remind me daily at)\s*(\d{1,2}:\d{2})(?:\s+(.+))?", text)
+    if m:
+        t = m.group(1)
+        hh, mm = t.split(":")
+        hh_i, mm_i = int(hh), int(mm)
+        if not (0 <= hh_i <= 23 and 0 <= mm_i <= 59):
+            return {"action": "invalid"}
+        message = m.group(2).strip() if m.group(2) else "Time for your Ayurveda daily routine check."
+        return {"action": "on", "time": f"{hh_i:02d}:{mm_i:02d}", "message": message}
+
+    if text in {"my reminder", "my reminders", "show reminder"}:
+        return {"action": "show"}
+
+    return None
+
+
+def send_whatsapp_message(to_number, body):
+    if not twilio_client or not TWILIO_NUMBER:
+        return False, "Twilio client not configured"
+    try:
+        twilio_client.messages.create(from_=TWILIO_NUMBER, to=to_number, body=body)
+        return True, "sent"
+    except Exception as e:
+        return False, str(e)
 
 
 def parse_severity(text):
@@ -664,6 +731,46 @@ def home():
 def health():
     return {"status": "ok"}, 200
 
+
+@app.route("/send-reminders", methods=['POST'])
+def send_due_reminders():
+    """Cron endpoint: sends reminders due for current HH:MM.
+
+    Protect with REMINDER_CRON_TOKEN passed as header: X-Reminder-Token.
+    """
+    token = request.headers.get("X-Reminder-Token", "")
+    if REMINDER_CRON_TOKEN and token != REMINDER_CRON_TOKEN:
+        return {"status": "forbidden"}, 403
+
+    now = datetime.now()
+    today = now.date().isoformat()
+
+    # Process current minute plus previous 4 minutes to tolerate scheduler delays.
+    candidate_times = {(now - timedelta(minutes=i)).strftime("%H:%M") for i in range(0, 5)}
+    due = []
+    seen_users = set()
+    for t in candidate_times:
+        for item in get_due_daily_reminders(t, today):
+            if item["user_id"] in seen_users:
+                continue
+            seen_users.add(item["user_id"])
+            due.append(item)
+    sent_count = 0
+    failed = []
+
+    for item in due:
+        ok, reason = send_whatsapp_message(
+            item["phone"],
+            f"🌿 Daily Reminder\n{item['reminder_message']}\n\n_Executed By Aniket Yadav_",
+        )
+        if ok:
+            mark_daily_reminder_sent(item["user_id"], today)
+            sent_count += 1
+        else:
+            failed.append({"user_id": item["user_id"], "reason": reason})
+
+    return {"status": "ok", "checked": len(due), "sent": sent_count, "failed": failed}, 200
+
 @app.route("/whatsapp", methods=['POST'])
 def whatsapp_bot():
     # 1. Capture incoming message
@@ -738,6 +845,48 @@ def whatsapp_bot():
             USER_SESSIONS.pop(from_user, None)
             msg.body("🧬 *Prakriti Analyzer Result*\n\n" + final_text + "\n\n_Executed By Aniket Yadav_")
             return str(resp)
+
+        # Daily reminder commands.
+        reminder_cmd = parse_daily_reminder_command(incoming_msg)
+        if reminder_cmd:
+            if reminder_cmd["action"] == "on":
+                upsert_daily_reminder(
+                    user_id=from_user,
+                    phone=from_user,
+                    reminder_time=reminder_cmd["time"],
+                    reminder_message=reminder_cmd["message"],
+                )
+                msg.body(
+                    f"✅ Daily reminder set at {reminder_cmd['time']}\n"
+                    f"Message: {reminder_cmd['message']}\n"
+                    "You can stop it anytime using `reminder off`.\n\n"
+                    "_Executed By Aniket Yadav_"
+                )
+                return str(resp)
+
+            if reminder_cmd["action"] == "off":
+                disabled = disable_daily_reminder(from_user)
+                msg.body(
+                    ("✅ Daily reminder turned off." if disabled else "No active reminder found.")
+                    + "\n\n_Executed By Aniket Yadav_"
+                )
+                return str(resp)
+
+            if reminder_cmd["action"] == "show":
+                current = get_user_daily_reminder(from_user)
+                if not current or not current.get("enabled"):
+                    msg.body("No active daily reminder set.\nUse: `reminder at 08:00 drink warm water`\n\n_Executed By Aniket Yadav_")
+                else:
+                    msg.body(
+                        f"🔔 Your daily reminder\nTime: {current['reminder_time']}\n"
+                        f"Message: {current['reminder_message']}\n\n"
+                        "_Executed By Aniket Yadav_"
+                    )
+                return str(resp)
+
+            if reminder_cmd["action"] == "invalid":
+                msg.body("Invalid reminder time format. Use HH:MM (24-hour).\nExample: `reminder at 20:30 drink water`\n\n_Executed By Aniket Yadav_")
+                return str(resp)
 
         # 4. Ingredient-based home remedies NLP intent.
         if "i have" in incoming_msg or "मेरे पास" in incoming_msg or "ingredients" in incoming_msg:

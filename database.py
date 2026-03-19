@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import sqlite3
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta
@@ -46,6 +47,112 @@ DEFAULT_SYMPTOM_ALIASES = {
 }
 
 TRACKER_STATE = {}
+REMINDER_DB_PATH = "reminders.db"
+
+
+def init_reminder_db():
+    """Create reminders table if it does not exist."""
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS daily_reminders (
+                user_id TEXT PRIMARY KEY,
+                phone TEXT NOT NULL,
+                reminder_time TEXT NOT NULL,
+                reminder_message TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_sent_date TEXT
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def upsert_daily_reminder(user_id, phone, reminder_time, reminder_message):
+    """Create or update a user's daily reminder."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        conn.execute(
+            """
+            INSERT INTO daily_reminders (user_id, phone, reminder_time, reminder_message, enabled, last_sent_date)
+            VALUES (?, ?, ?, ?, 1, NULL)
+            ON CONFLICT(user_id) DO UPDATE SET
+                phone=excluded.phone,
+                reminder_time=excluded.reminder_time,
+                reminder_message=excluded.reminder_message,
+                enabled=1
+            """,
+            (user_id, phone, reminder_time, reminder_message),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def disable_daily_reminder(user_id):
+    """Disable daily reminder for a user."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        cur = conn.execute("UPDATE daily_reminders SET enabled=0 WHERE user_id=?", (user_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_user_daily_reminder(user_id):
+    """Fetch configured daily reminder for a user."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT user_id, phone, reminder_time, reminder_message, enabled, last_sent_date FROM daily_reminders WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_due_daily_reminders(current_time, current_date):
+    """Return reminders due at the provided HH:MM and not sent today."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT user_id, phone, reminder_time, reminder_message, enabled, last_sent_date
+            FROM daily_reminders
+            WHERE enabled=1
+              AND reminder_time=?
+              AND (last_sent_date IS NULL OR last_sent_date <> ?)
+            """,
+            (current_time, current_date),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_daily_reminder_sent(user_id, current_date):
+    """Mark reminder as sent for the day."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        conn.execute(
+            "UPDATE daily_reminders SET last_sent_date=? WHERE user_id=?",
+            (current_date, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def load_structured_db():

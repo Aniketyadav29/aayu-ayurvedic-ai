@@ -69,3 +69,16 @@ jobs:
           if [ "$SUCCESS" -ne 1 ]; then
             echo "Warning: keepalive ping did not get a healthy response, but workflow will continue."
           fi
+
+      - name: Trigger daily reminder dispatcher
+        continue-on-error: true
+        env:
+          REMINDER_CRON_TOKEN: ${{ secrets.REMINDER_CRON_TOKEN }}
+        run: |
+          ROOT_URL="${{ steps.resolve.outputs.root_url }}"
+          echo "Calling reminder dispatcher on $ROOT_URL/send-reminders"
+          if [ -n "$REMINDER_CRON_TOKEN" ]; then
+            curl -sS -X POST "$ROOT_URL/send-reminders" -H "X-Reminder-Token: $REMINDER_CRON_TOKEN" || true
+          else
+            curl -sS -X POST "$ROOT_URL/send-reminders" || true
+          fi
