@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -25,6 +26,8 @@ try:
         disable_daily_reminder,
         get_user_daily_reminder,
         get_due_daily_reminders,
+        get_all_enabled_daily_reminders,
+        set_user_timezone,
         mark_daily_reminder_sent,
         geocode_address,
         find_nearest_hospitals,
@@ -47,6 +50,8 @@ except ImportError:
     def disable_daily_reminder(user_id): return False
     def get_user_daily_reminder(user_id): return None
     def get_due_daily_reminders(current_time, current_date): return []
+    def get_all_enabled_daily_reminders(): return []
+    def set_user_timezone(user_id, timezone_name): return False
     def mark_daily_reminder_sent(user_id, current_date): return None
     def geocode_address(address): return None
     def find_nearest_hospitals(lat, lon, limit=5): return []
@@ -140,9 +145,11 @@ HELP_TEXT_EN = (
     "   Example: `graph acidity`\n"
     "14) Daily reminder setup:\n"
     "   Example: `reminder at 08:00 drink warm water`\n"
-    "15) Stop reminder: `reminder off`\n"
-    "16) Stop consultation: type `cancel`\n"
-    "17) Show this menu again: type `help`"
+    "15) Set reminder timezone:\n"
+    "   Example: `timezone Asia/Kolkata`\n"
+    "16) Stop reminder: `reminder off`\n"
+    "17) Stop consultation: type `cancel`\n"
+    "18) Show this menu again: type `help`"
 )
 
 HELP_TEXT_HI = (
@@ -172,9 +179,11 @@ HELP_TEXT_HI = (
     "   उदाहरण: `graph acidity`\n"
     "14) डेली रिमाइंडर सेट करें:\n"
     "   उदाहरण: `reminder at 08:00 drink warm water`\n"
-    "15) रिमाइंडर बंद करें: `reminder off`\n"
-    "16) कंसल्टेशन रोकने के लिए: `cancel`\n"
-    "17) यह मेनू फिर से देखने के लिए: `help`"
+    "15) टाइमज़ोन सेट करें:\n"
+    "   उदाहरण: `timezone Asia/Kolkata`\n"
+    "16) रिमाइंडर बंद करें: `reminder off`\n"
+    "17) कंसल्टेशन रोकने के लिए: `cancel`\n"
+    "18) यह मेनू फिर से देखने के लिए: `help`"
 )
 
 REASON_HINTS = {
@@ -415,6 +424,14 @@ def parse_daily_reminder_command(text):
         return {"action": "show"}
 
     return None
+
+
+def parse_timezone_command(text):
+    text = (text or "").strip()
+    m = re.match(r"^(?:timezone|tz)\s+([A-Za-z_]+\/[A-Za-z_]+)$", text, flags=re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1)
 
 
 def send_whatsapp_message(to_number, body):
@@ -745,16 +762,26 @@ def send_due_reminders():
     now = datetime.now()
     today = now.date().isoformat()
 
-    # Process current minute plus previous 4 minutes to tolerate scheduler delays.
-    candidate_times = {(now - timedelta(minutes=i)).strftime("%H:%M") for i in range(0, 5)}
+    # Timezone-aware reminder selection: compare each user's local HH:MM and local date.
     due = []
-    seen_users = set()
-    for t in candidate_times:
-        for item in get_due_daily_reminders(t, today):
-            if item["user_id"] in seen_users:
-                continue
-            seen_users.add(item["user_id"])
-            due.append(item)
+    for item in get_all_enabled_daily_reminders():
+        timezone_name = item.get("timezone") or "Asia/Kolkata"
+        try:
+            local_now = now.astimezone(ZoneInfo(timezone_name))
+        except Exception:
+            local_now = now.astimezone(ZoneInfo("Asia/Kolkata"))
+            timezone_name = "Asia/Kolkata"
+
+        candidate_times = {(local_now - timedelta(minutes=i)).strftime("%H:%M") for i in range(0, 5)}
+        local_date = local_now.date().isoformat()
+
+        if item.get("reminder_time") not in candidate_times:
+            continue
+        if item.get("last_sent_date") == local_date:
+            continue
+
+        item["_local_date"] = local_date
+        due.append(item)
     sent_count = 0
     failed = []
 
@@ -764,7 +791,7 @@ def send_due_reminders():
             f"🌿 Daily Reminder\n{item['reminder_message']}\n\n_Executed By Aniket Yadav_",
         )
         if ok:
-            mark_daily_reminder_sent(item["user_id"], today)
+            mark_daily_reminder_sent(item["user_id"], item.get("_local_date", today))
             sent_count += 1
         else:
             failed.append({"user_id": item["user_id"], "reason": reason})
@@ -879,6 +906,7 @@ def whatsapp_bot():
                 else:
                     msg.body(
                         f"🔔 Your daily reminder\nTime: {current['reminder_time']}\n"
+                        f"Timezone: {current.get('timezone', 'Asia/Kolkata')}\n"
                         f"Message: {current['reminder_message']}\n\n"
                         "_Executed By Aniket Yadav_"
                     )
@@ -887,6 +915,18 @@ def whatsapp_bot():
             if reminder_cmd["action"] == "invalid":
                 msg.body("Invalid reminder time format. Use HH:MM (24-hour).\nExample: `reminder at 20:30 drink water`\n\n_Executed By Aniket Yadav_")
                 return str(resp)
+
+        timezone_name = parse_timezone_command(request.values.get('Body', '').strip())
+        if timezone_name:
+            updated = set_user_timezone(from_user, timezone_name)
+            if updated:
+                msg.body(f"✅ Reminder timezone updated to {timezone_name}.\n\n_Executed By Aniket Yadav_")
+            else:
+                msg.body(
+                    "Could not set timezone. Please ensure a reminder exists first and use a valid format, e.g. `timezone Asia/Kolkata`.\n\n"
+                    "_Executed By Aniket Yadav_"
+                )
+            return str(resp)
 
         # 4. Ingredient-based home remedies NLP intent.
         if "i have" in incoming_msg or "मेरे पास" in incoming_msg or "ingredients" in incoming_msg:
