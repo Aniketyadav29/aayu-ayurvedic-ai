@@ -1,10 +1,14 @@
 import os
 import json
 import math
+import re
 import sqlite3
 import urllib.parse
 import urllib.request
+from difflib import get_close_matches
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 from google import genai
 from dotenv import load_dotenv
 
@@ -61,11 +65,18 @@ def init_reminder_db():
                 phone TEXT NOT NULL,
                 reminder_time TEXT NOT NULL,
                 reminder_message TEXT NOT NULL,
+                timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 last_sent_date TEXT
             )
             """
         )
+
+        # Lightweight migration for older DBs created before timezone column existed.
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(daily_reminders)").fetchall()]
+        if "timezone" not in columns:
+            conn.execute("ALTER TABLE daily_reminders ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata'")
+
         conn.commit()
     finally:
         conn.close()
@@ -78,8 +89,8 @@ def upsert_daily_reminder(user_id, phone, reminder_time, reminder_message):
     try:
         conn.execute(
             """
-            INSERT INTO daily_reminders (user_id, phone, reminder_time, reminder_message, enabled, last_sent_date)
-            VALUES (?, ?, ?, ?, 1, NULL)
+            INSERT INTO daily_reminders (user_id, phone, reminder_time, reminder_message, timezone, enabled, last_sent_date)
+            VALUES (?, ?, ?, ?, 'Asia/Kolkata', 1, NULL)
             ON CONFLICT(user_id) DO UPDATE SET
                 phone=excluded.phone,
                 reminder_time=excluded.reminder_time,
@@ -89,6 +100,26 @@ def upsert_daily_reminder(user_id, phone, reminder_time, reminder_message):
             (user_id, phone, reminder_time, reminder_message),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def set_user_timezone(user_id, timezone_name):
+    """Set timezone for a user's reminder schedule."""
+    init_reminder_db()
+    try:
+        ZoneInfo(timezone_name)
+    except Exception:
+        return False
+
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        cur = conn.execute(
+            "UPDATE daily_reminders SET timezone=? WHERE user_id=?",
+            (timezone_name, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
@@ -112,10 +143,28 @@ def get_user_daily_reminder(user_id):
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
-            "SELECT user_id, phone, reminder_time, reminder_message, enabled, last_sent_date FROM daily_reminders WHERE user_id=?",
+            "SELECT user_id, phone, reminder_time, reminder_message, timezone, enabled, last_sent_date FROM daily_reminders WHERE user_id=?",
             (user_id,),
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_all_enabled_daily_reminders():
+    """Return all enabled reminders with timezone metadata."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT user_id, phone, reminder_time, reminder_message, timezone, enabled, last_sent_date
+            FROM daily_reminders
+            WHERE enabled=1
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -348,11 +397,20 @@ def parse_ingredients_from_text(text):
     # Support common kitchen synonyms.
     synonyms = {
         "haldi": "turmeric",
+        "haldi powder": "turmeric",
         "adrak": "ginger",
+        "sonth": "ginger",
         "shahad": "honey",
+        "madhu": "honey",
         "cumin": "jeera",
+        "jeera seeds": "jeera",
         "carom": "ajwain",
+        "ajvain": "ajwain",
         "fennel": "saunf",
+        "saumph": "saunf",
+        "kali mirch": "black pepper",
+        "blackpepper": "black pepper",
+        "tulasi": "tulsi",
     }
 
     normalized = text
@@ -364,11 +422,34 @@ def parse_ingredients_from_text(text):
         if ingredient in normalized:
             found.append(ingredient)
 
-    # Generic comma-separated fallback.
-    if not found and "," in text:
-        for token in [t.strip().lower() for t in text.split(",") if t.strip()]:
-            if len(token) > 2:
+    # Token-level fallback with fuzzy matching for typos.
+    if not found:
+        tokens = [
+            t.strip().lower()
+            for t in re.split(r"[,;/]|\band\b|\bwith\b|\busing\b|\bor\b", normalized)
+            if t.strip()
+        ]
+        cleaned_tokens = []
+        for token in tokens:
+            token = re.sub(r"[^a-z\s]", " ", token)
+            token = " ".join(token.split())
+            if len(token) >= 3:
+                cleaned_tokens.append(token)
+
+        for token in cleaned_tokens:
+            if token in ingredient_vocab:
                 found.append(token)
+                continue
+
+            # Match ingredient phrase included in user token (e.g., "fresh ginger root").
+            contains_match = next((ing for ing in ingredient_vocab if ing in token or token in ing), None)
+            if contains_match:
+                found.append(contains_match)
+                continue
+
+            close = get_close_matches(token, list(ingredient_vocab), n=1, cutoff=0.76)
+            if close:
+                found.append(close[0])
 
     return sorted(set(found))
 
@@ -378,6 +459,23 @@ def get_home_remedies_by_ingredients(ingredients):
     db = load_structured_db()
     remedies = []
     ing_set = set(i.lower() for i in ingredients)
+
+    if not ing_set:
+        defaults = []
+        for item in db.get("ingredient_remedies", [])[:3]:
+            required = set(i.lower() for i in item.get("ingredients", []))
+            defaults.append(
+                {
+                    "name": item.get("name"),
+                    "for": item.get("for", []),
+                    "instructions": item.get("instructions", ""),
+                    "matched_ingredients": [],
+                    "missing_ingredients": sorted(required),
+                    "match_score": 0,
+                    "partial": True,
+                }
+            )
+        return defaults
 
     for item in db.get("ingredient_remedies", []):
         required = set(i.lower() for i in item.get("ingredients", []))
@@ -396,8 +494,72 @@ def get_home_remedies_by_ingredients(ingredients):
                     "instructions": item.get("instructions", ""),
                     "matched_ingredients": matched,
                     "missing_ingredients": sorted(required - ing_set),
+                    "match_score": len(matched),
+                    "partial": False,
                 }
             )
+
+    if remedies:
+        remedies.sort(key=lambda r: (-r.get("match_score", 0), len(r.get("missing_ingredients", []))))
+        return remedies
+
+    # If no strong match, still provide best partial suggestions.
+    partial_candidates = []
+    for item in db.get("ingredient_remedies", []):
+        required = set(i.lower() for i in item.get("ingredients", []))
+        matched = sorted(required & ing_set)
+        if not matched:
+            continue
+        partial_candidates.append(
+            {
+                "name": item.get("name"),
+                "for": item.get("for", []),
+                "instructions": item.get("instructions", ""),
+                "matched_ingredients": matched,
+                "missing_ingredients": sorted(required - ing_set),
+                "match_score": len(matched),
+                "partial": True,
+            }
+        )
+
+    partial_candidates.sort(key=lambda r: (-r.get("match_score", 0), len(r.get("missing_ingredients", []))))
+    return partial_candidates[:3]
+
+
+def build_non_ai_recommendation(symptom, age, severity, detailed=False, duration=None, pain_reason=None, activities=None):
+    """Reliable local fallback response when Gemini is unavailable."""
+    symptom_key = (symptom or "unknown").lower().strip()
+    local = get_ayurvedic_knowledge(symptom_key)
+    structured = get_structured_conditions().get(symptom_key)
+
+    lines = ["🌿 AAYU Fallback Recommendation"]
+    lines.append(f"Symptom: {symptom_key if symptom_key else 'not provided'}")
+    lines.append(f"Severity: {severity}")
+
+    if local:
+        lines.append(f"Medicine: {local.get('medicine', 'General supportive care')}")
+        lines.append(f"Home Remedy: {local.get('home_remedy', 'Warm fluids and rest')}")
+        lines.append(f"Diet/Lifestyle: {local.get('lifestyle_tips', 'Eat light, warm meals and hydrate')}")
+        lines.append(f"Precaution: {local.get('avoid', 'Avoid self-medication if symptoms worsen')}")
+    elif structured:
+        lines.append(f"Dosha tendency: {structured.get('dosha', 'Unknown')}")
+        lines.append(f"Simple view: {structured.get('simple', 'Support digestion, hydration, and rest')}")
+        lines.append(f"Traditional tip: {structured.get('grandma', 'Use warm food and regular routine')}")
+    else:
+        lines.append("Medicine: Please use doctor-advised medicine for this condition.")
+        lines.append("Home Remedy: Warm fluids, rest, and light meals can support recovery.")
+        lines.append("Diet/Lifestyle: Avoid heavy, oily, and very cold foods.")
+
+    if detailed:
+        if duration:
+            lines.append(f"Duration noted: {duration}")
+        if pain_reason:
+            lines.append(f"Possible trigger: {pain_reason}")
+        if activities:
+            lines.append(f"Activity context: {activities}")
+
+    lines.append("⚠️ If symptoms are severe, persistent, or include emergency signs, visit nearest hospital immediately.")
+    return "\n".join(lines)
 
     return remedies
 
@@ -553,16 +715,25 @@ def get_ai_recommendation(symptom, age, severity):
     4. Caution:
     """
 
+    if not GEMINI_API_KEY:
+        return build_non_ai_recommendation(symptom, age, severity, detailed=False)
+
     try:
-        # New syntax for Gemini 2.5 Flash
-        response = client.models.generate_content(
-            model="gemini-2.0-flash", 
-            contents=prompt
-        )
+        # Enforce a hard timeout so webhook replies are never blocked for too long.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                client.models.generate_content,
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+            response = future.result(timeout=12)
         return response.text
+    except FuturesTimeoutError:
+        print("❌ AI Timeout: falling back to local recommendation")
+        return build_non_ai_recommendation(symptom, age, severity, detailed=False)
     except Exception as e:
         print(f"❌ AI Error: {e}")
-        return "⚠️ Connection to Ayurvedic AI lost. Try ginger tea while I reconnect!"
+        return build_non_ai_recommendation(symptom, age, severity, detailed=False)
 
 
 def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason, activities):
@@ -589,16 +760,47 @@ def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason
     Keep the response user-friendly and safe.
     """
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
+    if not GEMINI_API_KEY:
+        return build_non_ai_recommendation(
+            symptom,
+            age,
+            severity,
+            detailed=True,
+            duration=duration,
+            pain_reason=pain_reason,
+            activities=activities,
         )
+
+    try:
+        # Enforce a hard timeout so guided flow can complete reliably.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                client.models.generate_content,
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+            response = future.result(timeout=15)
         return response.text
+    except FuturesTimeoutError:
+        print("❌ AI Detailed Timeout: falling back to local recommendation")
+        return build_non_ai_recommendation(
+            symptom,
+            age,
+            severity,
+            detailed=True,
+            duration=duration,
+            pain_reason=pain_reason,
+            activities=activities,
+        )
     except Exception as e:
         print(f"❌ AI Detailed Error: {e}")
-        return (
-            "⚠️ I could not generate a full guided assessment right now.\n"
-            "Please rest, stay hydrated, and if symptoms are severe or persistent, visit the nearest hospital."
+        return build_non_ai_recommendation(
+            symptom,
+            age,
+            severity,
+            detailed=True,
+            duration=duration,
+            pain_reason=pain_reason,
+            activities=activities,
         )
 

@@ -302,19 +302,35 @@ def start_prakriti_session(user_id, lang):
 def format_remedy_response(remedies, lang):
     if not remedies:
         return (
-            "मौजूदा सामग्री से कोई उपयुक्त उपाय नहीं मिला। और सामग्री बताएं।"
+            "कोई strong exact remedy match नहीं मिला, लेकिन मैं help कर सकता हूं।\n"
+            "कृपया ingredients comma से भेजें, जैसे: haldi, adrak, shahad या tulsi, kali mirch, ginger"
             if lang == "hi"
-            else "I could not find a strong remedy from these ingredients. Please share more ingredients."
+            else "I could not find an exact strong remedy match, but I can still suggest options.\n"
+            "Please share ingredients in comma format, for example: turmeric, ginger, honey or tulsi, black pepper, ginger"
         )
 
     lines = ["🏡 *Ingredient-based Home Remedies*" if lang == "en" else "🏡 *उपलब्ध सामग्री से घरेलू उपाय*"]
     for idx, item in enumerate(remedies[:3], start=1):
+        missing = item.get("missing_ingredients", [])
+        partial = item.get("partial", False)
+        missing_line = (
+            f"• Add if possible: {', '.join(missing)}\n" if partial and missing else ""
+        )
         lines.append(
             f"\n{idx}. *{item['name']}*\n"
             f"• For: {', '.join(item.get('for', []))}\n"
             f"• Matched: {', '.join(item.get('matched_ingredients', []))}\n"
+            f"{missing_line}"
             f"• Method: {item.get('instructions', '')}"
         )
+
+    if any(item.get("partial") for item in remedies[:3]):
+        lines.append(
+            "\nNote: These are best possible options from your available ingredients."
+            if lang == "en"
+            else "\nनोट: ये आपके उपलब्ध ingredients के आधार पर best possible विकल्प हैं।"
+        )
+
     return "\n".join(lines)
 
 
@@ -495,8 +511,20 @@ def parse_natural_input(incoming_msg):
 
 
 def user_wants_hospital_help(text):
-    keywords = ["hospital", "doctor", "clinic", "nearest hospital", "nearby hospital", "emergency"]
-    return any(keyword in text for keyword in keywords)
+    clean = (text or "").lower().strip()
+    if not clean:
+        return False
+
+    # Only trigger hospital lookup for explicit location-seeking intent.
+    if extract_address_from_text(clean):
+        return True
+
+    location_terms = [" near ", " nearby", " nearest", " in ", " around ", "location", "address"]
+    service_terms = ["hospital", "clinic", "doctor"]
+
+    has_service = any(term in clean for term in service_terms)
+    has_location = any(term in clean for term in location_terms)
+    return has_service and has_location
 
 
 def is_greeting(text):
@@ -929,8 +957,30 @@ def whatsapp_bot():
             return str(resp)
 
         # 4. Ingredient-based home remedies NLP intent.
-        if "i have" in incoming_msg or "मेरे पास" in incoming_msg or "ingredients" in incoming_msg:
-            ingredients = parse_ingredients_from_text(incoming_msg)
+        ingredient_markers = [
+            "ingredients",
+            "ingredient",
+            "available",
+            "with these",
+            "using",
+            "use these",
+            "kitchen",
+            "home remedy",
+            "घरेलू",
+            "सामग्री",
+        ]
+        ingredients = parse_ingredients_from_text(incoming_msg)
+        has_ingredient_keyword = any(marker in incoming_msg for marker in ingredient_markers)
+        has_list_style_text = any(sep in incoming_msg for sep in [",", " and ", " with ", "/"]) 
+        has_possession_phrase = ("i have" in incoming_msg) or ("मेरे पास" in incoming_msg)
+
+        should_run_ingredient_flow = (
+            len(ingredients) >= 2
+            or has_ingredient_keyword
+            or (has_possession_phrase and has_list_style_text and len(ingredients) >= 1)
+        )
+
+        if should_run_ingredient_flow:
             remedies = get_home_remedies_by_ingredients(ingredients)
             result = format_remedy_response(remedies, lang)
             msg.body(result + "\n\n_Executed By Aniket Yadav_")
