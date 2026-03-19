@@ -78,7 +78,7 @@ The bot extracts age, symptom, and severity from natural text and responds accor
 
 File already added:
 ```text
-.github/workflows/keepalive.yml
+.github/workflows/keep.yml
 ```
 
 Set repository secret in GitHub:

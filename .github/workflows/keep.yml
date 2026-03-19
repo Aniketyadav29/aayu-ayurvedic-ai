@@ -1,0 +1,56 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    # GitHub Actions supports minimum 5-minute intervals.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-render-awake
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ping Render health URL
+        env:
+          RENDER_HEALTH_URL: ${{ secrets.RENDER_HEALTH_URL }}
+          PING_TIMEOUT_SECONDS: '20'
+        run: |
+          URL="${RENDER_HEALTH_URL:-https://aayu-ayurvedic-ai-1.onrender.com/health}"
+          export RENDER_HEALTH_URL="$URL"
+
+          ATTEMPT=1
+          MAX_ATTEMPTS=4
+
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $RENDER_HEALTH_URL"
+
+            if python scripts/keepalive_ping.py; then
+              echo "keepalive ping succeeded"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              echo "Ping failed. Retrying in 20 seconds..."
+              sleep 20
+            fi
+          done
+
+          echo "keepalive ping failed after $MAX_ATTEMPTS attempts"
+          exit 1

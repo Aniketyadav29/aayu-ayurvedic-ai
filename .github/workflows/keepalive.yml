@@ -1,6 +1,6 @@
 name: Keep Render Awake
 
-on:
+'on':
   schedule:
     # GitHub Actions supports minimum 5-minute intervals.
     - cron: '*/5 * * * *'
@@ -28,6 +28,7 @@ jobs:
           echo "root_url=$ROOT_URL" >> "$GITHUB_OUTPUT"
 
       - name: Ping Render health URL
+        continue-on-error: true
         run: |
           PRIMARY_URL="${{ steps.resolve.outputs.url }}"
           ROOT_URL="${{ steps.resolve.outputs.root_url }}"
