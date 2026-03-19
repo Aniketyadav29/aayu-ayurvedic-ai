@@ -12,6 +12,13 @@ try:
         get_ai_detailed_recommendation,
         get_all_symptoms,
         find_best_symptom,
+        parse_ingredients_from_text,
+        get_home_remedies_by_ingredients,
+        get_mood_mind_support,
+        analyze_prakriti,
+        explain_condition_styles,
+        knowledge_graph_links,
+        update_health_tracker,
         geocode_address,
         find_nearest_hospitals,
     )
@@ -22,6 +29,13 @@ except ImportError:
     def get_ai_detailed_recommendation(s, a, sev, d, r, act): return "Detailed AI logic is currently offline."
     def get_all_symptoms(): return ()
     def find_best_symptom(text): return None
+    def parse_ingredients_from_text(text): return []
+    def get_home_remedies_by_ingredients(ingredients): return []
+    def get_mood_mind_support(text): return None
+    def analyze_prakriti(answers): return "Prakriti analyzer offline."
+    def explain_condition_styles(condition): return None
+    def knowledge_graph_links(topic): return []
+    def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, today=None): return {"streak": 0, "badges": [], "good_day": False}
     def geocode_address(address): return None
     def find_nearest_hospitals(lat, lon, limit=5): return []
 
@@ -95,8 +109,19 @@ HELP_TEXT_EN = (
     "6) Nearest hospitals by live location: share WhatsApp location\n"
     "7) Emergency support:\n"
     "   Example: `severe chest pain and difficulty breathing`\n"
-    "8) Stop consultation: type `cancel`\n"
-    "9) Show this menu again: type `help`"
+    "8) Prakriti analyzer: type `prakriti`\n"
+    "9) Ingredient remedies:\n"
+    "   Example: `I have turmeric, ginger, honey`\n"
+    "10) Mood + mind support:\n"
+    "   Example: `I am feeling anxious`\n"
+    "11) Health tracker:\n"
+    "   Example: `track water 8 sleep 7 diet good`\n"
+    "12) Explain like grandma mode:\n"
+    "   Example: `explain acidity`\n"
+    "13) Knowledge graph links:\n"
+    "   Example: `graph acidity`\n"
+    "14) Stop consultation: type `cancel`\n"
+    "15) Show this menu again: type `help`"
 )
 
 HELP_TEXT_HI = (
@@ -113,8 +138,19 @@ HELP_TEXT_HI = (
     "6) लाइव लोकेशन शेयर करके नजदीकी अस्पताल पाएं\n"
     "7) इमरजेंसी सपोर्ट:\n"
     "   उदाहरण: `severe chest pain and difficulty breathing`\n"
-    "8) कंसल्टेशन रोकने के लिए: `cancel`\n"
-    "9) यह मेनू फिर से देखने के लिए: `help`"
+    "8) प्रकृति विश्लेषण: `prakriti` लिखें\n"
+    "9) उपलब्ध सामग्री से उपाय:\n"
+    "   उदाहरण: `I have turmeric, ginger, honey`\n"
+    "10) मूड + माइंड सपोर्ट:\n"
+    "   उदाहरण: `I am feeling anxious`\n"
+    "11) हेल्थ ट्रैकर:\n"
+    "   उदाहरण: `track water 8 sleep 7 diet good`\n"
+    "12) Explain like grandma:\n"
+    "   उदाहरण: `explain acidity`\n"
+    "13) Knowledge graph:\n"
+    "   उदाहरण: `graph acidity`\n"
+    "14) कंसल्टेशन रोकने के लिए: `cancel`\n"
+    "15) यह मेनू फिर से देखने के लिए: `help`"
 )
 
 REASON_HINTS = {
@@ -197,6 +233,133 @@ def get_step_prompt(step, lang):
     return prompts.get(step, STEP_PROMPTS_EN.get(step, "Please continue."))
 
 
+PRAKRITI_QUESTIONS_EN = [
+    "Prakriti Q1/5: Body frame (thin / medium / broad)?",
+    "Prakriti Q2/5: Digestion (irregular / strong / slow)?",
+    "Prakriti Q3/5: Climate preference (warm / cool / dry)?",
+    "Prakriti Q4/5: Sleep pattern (light / moderate / deep)?",
+    "Prakriti Q5/5: Mind tendency (quick/anxious, intense/focused, calm/steady)?",
+]
+
+PRAKRITI_QUESTIONS_HI = [
+    "प्रकृति Q1/5: आपका शरीर ढांचा कैसा है? (thin / medium / broad)",
+    "प्रकृति Q2/5: पाचन कैसा रहता है? (irregular / strong / slow)",
+    "प्रकृति Q3/5: मौसम पसंद? (warm / cool / dry)",
+    "प्रकृति Q4/5: नींद कैसी है? (light / moderate / deep)",
+    "प्रकृति Q5/5: मानसिक प्रवृत्ति? (quick/anxious, intense/focused, calm/steady)",
+]
+
+
+def get_prakriti_question(index, lang):
+    items = PRAKRITI_QUESTIONS_HI if lang == "hi" else PRAKRITI_QUESTIONS_EN
+    return items[index]
+
+
+def start_prakriti_session(user_id, lang):
+    USER_SESSIONS[user_id] = {
+        "mode": "prakriti",
+        "step_index": 0,
+        "answers": [],
+        "lang": lang,
+    }
+    intro = "🧬 प्रकृति विश्लेषण शुरू हो रहा है।" if lang == "hi" else "🧬 Starting Prakriti analyzer."
+    return f"{intro}\n{get_prakriti_question(0, lang)}"
+
+
+def format_remedy_response(remedies, lang):
+    if not remedies:
+        return (
+            "मौजूदा सामग्री से कोई उपयुक्त उपाय नहीं मिला। और सामग्री बताएं।"
+            if lang == "hi"
+            else "I could not find a strong remedy from these ingredients. Please share more ingredients."
+        )
+
+    lines = ["🏡 *Ingredient-based Home Remedies*" if lang == "en" else "🏡 *उपलब्ध सामग्री से घरेलू उपाय*"]
+    for idx, item in enumerate(remedies[:3], start=1):
+        lines.append(
+            f"\n{idx}. *{item['name']}*\n"
+            f"• For: {', '.join(item.get('for', []))}\n"
+            f"• Matched: {', '.join(item.get('matched_ingredients', []))}\n"
+            f"• Method: {item.get('instructions', '')}"
+        )
+    return "\n".join(lines)
+
+
+def format_mood_response(mood_data, lang):
+    if not mood_data:
+        return None
+    header = "🧠 *Mood + Mind Ayurveda*" if lang == "en" else "🧠 *मूड + माइंड आयुर्वेद*"
+    lines = [header, f"Dosha: {mood_data.get('dosha', 'Unknown')}"]
+    for tip in mood_data.get("suggestions", []):
+        lines.append(f"• {tip}")
+    return "\n".join(lines)
+
+
+def parse_tracker_command(text):
+    """Parse tracker command like: track water 8 sleep 7 diet good"""
+    text = (text or "").lower()
+    if not text.startswith("track"):
+        return None
+
+    water_match = re.search(r"water\s*(\d+)", text)
+    sleep_match = re.search(r"sleep\s*(\d+)", text)
+    diet_match = re.search(r"diet\s*(good|healthy|clean|average|poor)", text)
+
+    if not (water_match and sleep_match and diet_match):
+        return None
+
+    return {
+        "water": int(water_match.group(1)),
+        "sleep": int(sleep_match.group(1)),
+        "diet": diet_match.group(1),
+    }
+
+
+def format_tracker_response(result, lang):
+    streak = result.get("streak", 0)
+    badges = result.get("badges", [])
+    if lang == "hi":
+        text = f"🎯 आज की एंट्री सेव हो गई।\nCurrent streak: {streak} day(s)."
+        if badges:
+            text += "\n🏅 Badges: " + ", ".join(badges)
+        return text
+
+    text = f"🎯 Daily health log saved.\nCurrent streak: {streak} day(s)."
+    if badges:
+        text += "\n🏅 Badges: " + ", ".join(badges)
+    return text
+
+
+def format_explain_styles(condition, styles, lang):
+    if not styles:
+        return (
+            "इस condition के लिए explain-style data उपलब्ध नहीं है।"
+            if lang == "hi"
+            else "Explain-style data is not available for this condition."
+        )
+
+    return (
+        f"🧾 *Explain Like Grandma Mode: {condition}*\n"
+        f"Dosha: {styles.get('dosha')}\n\n"
+        f"1) Scientific: {styles.get('scientific')}\n\n"
+        f"2) Simple: {styles.get('simple')}\n\n"
+        f"3) Traditional (Grandma): {styles.get('grandma')}"
+    )
+
+
+def format_graph_links(topic, links, lang):
+    if not links:
+        return (
+            f"No graph links found for `{topic}`."
+            if lang == "en"
+            else f"`{topic}` के लिए graph links नहीं मिले।"
+        )
+    lines = [f"🕸️ *Knowledge Graph Links: {topic}*"]
+    for item in links:
+        lines.append(f"• {item.get('from')} --{item.get('type')}--> {item.get('to')}")
+    return "\n".join(lines)
+
+
 def parse_severity(text):
     """Infer severity level from common words in natural language input."""
     for severity, words in SEVERITY_KEYWORDS.items():
@@ -254,14 +417,15 @@ def user_wants_hospital_help(text):
 
 def is_greeting(text):
     text = (text or "").strip().lower()
-    greeting_tokens = ["hi", "hello", "hey", "namaste", "नमस्ते", "हैलो", "aayu"]
+    english_tokens = {"hi", "hello", "hey", "namaste", "aayu"}
+    hindi_tokens = {"नमस्ते", "हैलो"}
 
-    # Regex word boundaries work well for Latin text but can miss some Unicode scripts,
-    # so we use direct token equality + substring fallback.
-    words = set(text.split())
-    if any(token in words for token in greeting_tokens):
+    words = set(re.findall(r"[\w\u0900-\u097F]+", text))
+    if any(token in words for token in english_tokens | hindi_tokens):
         return True
-    return any(token in text for token in greeting_tokens)
+
+    # Fallback only for Hindi full tokens in case of punctuation-adjacent input.
+    return any(token in text for token in hindi_tokens)
 
 
 def extract_address_from_text(text):
@@ -350,6 +514,7 @@ def should_escalate_guided(session_data):
 
 def start_guided_session(user_id, lang="en"):
     USER_SESSIONS[user_id] = {
+        "mode": "guided",
         "step_index": 0,
         "data": {},
         "lang": lang,
@@ -543,13 +708,79 @@ def whatsapp_bot():
         msg.body(start_guided_session(from_user, lang=lang) + "\n\n_Executed By Aniket Yadav_")
         return str(resp)
 
+    if incoming_msg in {"prakriti", "प्रकृति"}:
+        lang = USER_LANGUAGE_PREF.get(from_user) or detect_language(request.values.get('Body', ''))
+        USER_LANGUAGE_PREF[from_user] = lang
+        msg.body(start_prakriti_session(from_user, lang=lang) + "\n\n_Executed By Aniket Yadav_")
+        return str(resp)
+
     try:
         if incoming_msg in {"cancel", "stop", "exit"} and from_user in USER_SESSIONS:
             USER_SESSIONS.pop(from_user, None)
             msg.body("Consultation cancelled. Type `start` to begin again.\n\n_Executed By Aniket Yadav_")
             return str(resp)
 
-        # 3. Emergency triage mode always gets top priority.
+        lang = USER_LANGUAGE_PREF.get(from_user) or detect_language(request.values.get('Body', ''))
+        USER_LANGUAGE_PREF[from_user] = lang
+
+        # 3. Prakriti Q&A mode.
+        if from_user in USER_SESSIONS and USER_SESSIONS[from_user].get("mode") == "prakriti":
+            session = USER_SESSIONS[from_user]
+            answer = request.values.get('Body', '').strip()
+            session["answers"].append(answer)
+            session["step_index"] += 1
+
+            if session["step_index"] < len(PRAKRITI_QUESTIONS_EN):
+                msg.body(get_prakriti_question(session["step_index"], session.get("lang", "en")) + "\n\n_Executed By Aniket Yadav_")
+                return str(resp)
+
+            final_text = analyze_prakriti(session.get("answers", []))
+            USER_SESSIONS.pop(from_user, None)
+            msg.body("🧬 *Prakriti Analyzer Result*\n\n" + final_text + "\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
+        # 4. Ingredient-based home remedies NLP intent.
+        if "i have" in incoming_msg or "मेरे पास" in incoming_msg or "ingredients" in incoming_msg:
+            ingredients = parse_ingredients_from_text(incoming_msg)
+            remedies = get_home_remedies_by_ingredients(ingredients)
+            result = format_remedy_response(remedies, lang)
+            msg.body(result + "\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
+        # 5. Mood + mind Ayurveda intent.
+        mood_support = get_mood_mind_support(incoming_msg)
+        if mood_support:
+            result = format_mood_response(mood_support, lang)
+            msg.body(result + "\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
+        # 6. Health tracker intent.
+        tracker_payload = parse_tracker_command(incoming_msg)
+        if tracker_payload:
+            tracker_result = update_health_tracker(
+                from_user,
+                water_glasses=tracker_payload["water"],
+                sleep_hours=tracker_payload["sleep"],
+                diet_quality=tracker_payload["diet"],
+            )
+            msg.body(format_tracker_response(tracker_result, lang) + "\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
+        # 7. Explain-like-grandma mode intent.
+        if incoming_msg.startswith("explain ") or incoming_msg.startswith("grandma "):
+            condition = incoming_msg.split(" ", 1)[1].strip()
+            styles = explain_condition_styles(parse_symptom(condition) or condition)
+            msg.body(format_explain_styles(condition, styles, lang) + "\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
+        # 8. Knowledge graph links intent.
+        if incoming_msg.startswith("graph "):
+            topic = incoming_msg.split(" ", 1)[1].strip()
+            links = knowledge_graph_links(parse_symptom(topic) or topic)
+            msg.body(format_graph_links(topic, links, lang) + "\n\n_Executed By Aniket Yadav_")
+            return str(resp)
+
+        # 9. Emergency triage mode always gets top priority.
         emergency_signs = detect_emergency(incoming_msg)
         if emergency_signs:
             hospitals = []
@@ -570,7 +801,7 @@ def whatsapp_bot():
             print("✅ Emergency triage response sent!")
             return str(resp)
 
-        # 4. Hospital help via shared location or typed address.
+        # 10. Hospital help via shared location or typed address.
         if latitude and longitude:
             hospitals = find_nearest_hospitals(float(latitude), float(longitude), limit=5)
             result = format_hospital_response(hospitals)
@@ -608,8 +839,8 @@ def whatsapp_bot():
             print("✅ Hospital response sent successfully!")
             return str(resp)
 
-        # 5. Guided consultation mode (step-by-step).
-        if from_user in USER_SESSIONS:
+        # 11. Guided consultation mode (step-by-step).
+        if from_user in USER_SESSIONS and USER_SESSIONS[from_user].get("mode") == "guided":
             current_step = get_current_step(from_user)
             ok, error_text = save_step_answer(from_user, current_step, request.values.get('Body', '').strip())
             if not ok:

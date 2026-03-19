@@ -1,0 +1,119 @@
+{
+  "conditions": {
+    "acidity": {
+      "dosha": "Pitta",
+      "scientific": "Acidity is often linked to excess gastric acid, irregular meal timing, and food triggers.",
+      "simple": "Your stomach is getting irritated, usually because of spicy/oily food or late meals.",
+      "grandma": "Beta, garam-masala aur late-night snacks kam karo, nariyal pani lo, pet shaant rahega."
+    },
+    "indigestion": {
+      "dosha": "Vata-Pitta",
+      "scientific": "Indigestion can occur due to poor digestion kinetics, overeating, or low gut motility.",
+      "simple": "Your food is not digesting properly, often due to heavy meals or fast eating.",
+      "grandma": "Beta, aram se chaba ke khao, ajwain-garam paani lo, pet halka lagega."
+    },
+    "anxiety": {
+      "dosha": "Vata",
+      "scientific": "Anxiety can involve autonomic overactivation, poor sleep, and stress-hormone imbalance.",
+      "simple": "Your mind is overactive and stressed; calming routine and sleep support are needed.",
+      "grandma": "Beta, tel se pairon ki malish karo, garam doodh piyo, dheere-dheere saans lo."
+    },
+    "insomnia": {
+      "dosha": "Vata",
+      "scientific": "Insomnia is related to disrupted circadian rhythm, stress, and nighttime overstimulation.",
+      "simple": "Your sleep cycle is disturbed due to stress, screen time, or irregular routine.",
+      "grandma": "Beta, raat ko phone kam karo, garam doodh lo aur jaldi so jao."
+    },
+    "joint pain": {
+      "dosha": "Vata",
+      "scientific": "Joint pain may involve inflammation, cartilage wear, or mechanical stress.",
+      "simple": "Your joints may be stiff or inflamed, often due to strain or low mobility.",
+      "grandma": "Beta, til ke tel se halka sek karo, sharir ko thandi hawa se bachao."
+    }
+  },
+  "ingredient_remedies": [
+    {
+      "name": "Turmeric Ginger Honey Decoction",
+      "ingredients": ["turmeric", "ginger", "honey"],
+      "for": ["cold", "cough", "sore throat", "low immunity"],
+      "instructions": "Boil 1 cup water with grated ginger and a pinch of turmeric for 5-7 minutes. Cool slightly and add honey. Drink warm twice daily."
+    },
+    {
+      "name": "Jeera Ajwain Digestive Water",
+      "ingredients": ["jeera", "ajwain", "water"],
+      "for": ["acidity", "indigestion", "gas"],
+      "instructions": "Boil 1 tsp jeera and 1/2 tsp ajwain in 2 cups water until reduced to 1 cup. Sip warm after meals."
+    },
+    {
+      "name": "Tulsi Black Pepper Kadha",
+      "ingredients": ["tulsi", "black pepper", "ginger"],
+      "for": ["cough", "cold", "fever support"],
+      "instructions": "Boil tulsi leaves, crushed black pepper, and ginger in water for 8 minutes. Strain and sip warm."
+    },
+    {
+      "name": "Fennel Cumin Calm Tea",
+      "ingredients": ["saunf", "jeera", "water"],
+      "for": ["bloating", "indigestion", "stomach discomfort"],
+      "instructions": "Boil fennel and cumin in water for 6 minutes. Drink warm after meals."
+    }
+  ],
+  "mood_mind": {
+    "anxious": {
+      "dosha": "Vata imbalance",
+      "suggestions": [
+        "Warm sesame oil foot massage before sleep",
+        "Deep breathing for 7 minutes twice daily",
+        "Warm and freshly cooked food"
+      ]
+    },
+    "stressed": {
+      "dosha": "Vata-Pitta aggravation",
+      "suggestions": [
+        "Abhyanga (oil massage) 3 times/week",
+        "Reduce caffeine and spicy foods",
+        "Evening walk and digital detox"
+      ]
+    },
+    "sad": {
+      "dosha": "Kapha-Vata imbalance",
+      "suggestions": [
+        "Morning sunlight and brisk walk",
+        "Warm herbal tea and light meals",
+        "Daily gratitude journaling"
+      ]
+    }
+  },
+  "prakriti_questions": [
+    "Body frame (thin / medium / broad)",
+    "Digestion (irregular / strong / slow)",
+    "Climate preference (warm / cool / dry)",
+    "Sleep (light / moderate / deep)",
+    "Mind tendency (quick anxious / focused intense / calm steady)"
+  ],
+  "knowledge_graph": {
+    "nodes": [
+      "Vata",
+      "Pitta",
+      "Kapha",
+      "acidity",
+      "indigestion",
+      "anxiety",
+      "insomnia",
+      "joint pain",
+      "turmeric",
+      "ginger",
+      "honey",
+      "jeera",
+      "ajwain"
+    ],
+    "edges": [
+      {"from": "acidity", "to": "Pitta", "type": "aggravates"},
+      {"from": "anxiety", "to": "Vata", "type": "aggravates"},
+      {"from": "joint pain", "to": "Vata", "type": "associated_with"},
+      {"from": "turmeric", "to": "inflammation", "type": "supports"},
+      {"from": "ginger", "to": "digestion", "type": "supports"},
+      {"from": "jeera", "to": "digestion", "type": "supports"},
+      {"from": "ajwain", "to": "gas relief", "type": "supports"}
+    ]
+  }
+}
