@@ -30,6 +30,7 @@ try:
         get_home_remedies_by_ingredients,
         get_mood_mind_support,
         get_daily_routine_plan,
+        get_menu_database_classification,
         load_structured_db,
         get_structured_conditions,
         get_user_daily_reminder,
@@ -60,6 +61,7 @@ except ImportError:
     get_home_remedies_by_ingredients = lambda _i: []
     get_mood_mind_support = _missing
     get_daily_routine_plan = lambda _t, _a=None: "Daily routine planner is currently offline."
+    get_menu_database_classification = lambda: "Database classification is currently offline."
     load_structured_db = lambda: {}
     get_structured_conditions = lambda: {}
     get_user_daily_reminder = _missing
@@ -169,6 +171,8 @@ def get_help_menu(profile_name="there"):
         "19) View menu image: type menu image\n"
         "20) Daily routine planner:\n"
         "   Example: daily routine for age 28 with acidity\n\n"
+        "21) Menu-wise database classification:\n"
+        "   Example: classify database\n\n"
         "Tip: type start to begin guided consultation now."
     )
 
@@ -248,6 +252,7 @@ Allowed intents:
 - timezone_set
 - prakriti_start
 - about_data_source
+- database_classification
 - emergency
 - unknown
 
@@ -299,6 +304,9 @@ def heuristic_extract(text):
 
     if any(k in low for k in ["database", "data source", "source of answer", "which db", "kis database"]):
         return {"intent": "about_data_source"}
+
+    if any(k in low for k in ["classify database", "database classification", "classify db", "menu database"]):
+        return {"intent": "database_classification"}
 
     if any(p in low for p in ["daily routine", "routine plan", "my routine", "diet plan timewise"]):
         return {
@@ -861,6 +869,9 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
             "3) SQLite (reminders.db) for reminders/tracker user state only.\n"
             "Source: Gemini API"
         )
+
+    if intent == "database_classification":
+        return get_menu_database_classification()
 
     if intent == "start_consultation":
         USER_STATE.setdefault(user_id, {})["consultation"] = {"step": "age"}

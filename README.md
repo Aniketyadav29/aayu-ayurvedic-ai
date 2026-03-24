@@ -75,6 +75,9 @@ http://127.0.0.1:5000/health
 - Daily routine planner:
 	- Send `daily routine for age 28 with acidity` (or similar text).
 	- Bot returns a time-wise routine with morning habits, meals, and exercise.
+- Menu-wise database classification:
+	- Send `classify database`.
+	- Bot returns database mapping for each menu section with current data coverage and gaps.
 
 ## Optional Environment Variable
 

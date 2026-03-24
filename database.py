@@ -260,6 +260,63 @@ def get_structured_conditions():
     return load_structured_db().get("conditions", {})
 
 
+def get_menu_database_classification():
+    """Classify available data coverage according to AAYU menu sections."""
+    knowledge = load_knowledge_data() or {}
+    structured = load_structured_db() or {}
+
+    conditions = structured.get("conditions", {}) or {}
+    ingredient_remedies = structured.get("ingredient_remedies", []) or []
+    mood_mind = structured.get("mood_mind", {}) or {}
+    prakriti_questions = structured.get("prakriti_questions", []) or []
+    graph = structured.get("knowledge_graph", {}) or {}
+    graph_nodes = graph.get("nodes", []) or []
+    graph_edges = graph.get("edges", []) or []
+
+    menu_map = [
+        ("Step-by-step Consultation", "Gemini API + knowledge.json + structured_db.json", f"symptoms={len(knowledge)}, conditions={len(conditions)}"),
+        ("Quick Query / Paragraph / Symptom", "Gemini API + knowledge.json", f"symptoms={len(knowledge)}"),
+        ("Hospital Near Me / Live Location", "OpenStreetMap APIs (geocoding + hospitals)", "external live data"),
+        ("Emergency Support", "Gemini API + emergency keyword rules", "rules + AI triage text"),
+        ("Ingredient Remedies", "Gemini API + structured_db.json: ingredient_remedies", f"remedies={len(ingredient_remedies)}"),
+        ("Mood Support", "Gemini API + structured_db.json: mood_mind", f"mood_profiles={len(mood_mind)}"),
+        ("Prakriti Analyzer", "Gemini API + structured_db.json: prakriti_questions", f"questions={len(prakriti_questions)}"),
+        ("Explain Like Grandma", "Gemini API + structured_db.json: conditions", f"conditions={len(conditions)}"),
+        ("Knowledge Graph", "Gemini API + structured_db.json: knowledge_graph", f"nodes={len(graph_nodes)}, edges={len(graph_edges)}"),
+        ("Health Tracker", "SQLite reminders.db (tracker state) + Gemini interpretation", "stateful user data"),
+        ("Daily Reminder / Timezone", "SQLite reminders.db", "stateful user schedule"),
+        ("Menu Image", "static/menu_custom.png or fallback generated image", "static media asset"),
+        ("Daily Routine Planner", "Gemini API (primary) + local fallback", "AI-first routine generation"),
+    ]
+
+    gaps = []
+    if len(knowledge) < 30:
+        gaps.append("knowledge.json symptom coverage is limited (<30).")
+    if len(conditions) < 15:
+        gaps.append("structured conditions coverage is limited (<15).")
+    if len(ingredient_remedies) < 10:
+        gaps.append("ingredient remedies are limited (<10).")
+    if len(mood_mind) < 5:
+        gaps.append("mood support profiles are limited (<5).")
+    if len(graph_edges) < 20:
+        gaps.append("knowledge graph links are limited (<20 edges).")
+
+    lines = ["AAYU Menu-wise Database Classification"]
+    for idx, (menu_name, source, coverage) in enumerate(menu_map, start=1):
+        lines.append(f"{idx}. {menu_name}")
+        lines.append(f"   Source: {source}")
+        lines.append(f"   Coverage: {coverage}")
+
+    if gaps:
+        lines.append("Data gaps detected:")
+        for g in gaps:
+            lines.append(f"- {g}")
+    else:
+        lines.append("Data gaps detected: none major")
+
+    return "\n".join(lines)
+
+
 def find_best_symptom(text):
     """Find the most likely known symptom in free-form user text."""
     if not text:
