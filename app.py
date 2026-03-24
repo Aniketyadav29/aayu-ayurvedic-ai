@@ -247,6 +247,7 @@ Allowed intents:
 - reminder_off
 - timezone_set
 - prakriti_start
+- about_data_source
 - emergency
 - unknown
 
@@ -295,6 +296,9 @@ def heuristic_extract(text):
         return {"intent": "menu_image"}
     if low == "prakriti":
         return {"intent": "prakriti_start"}
+
+    if any(k in low for k in ["database", "data source", "source of answer", "which db", "kis database"]):
+        return {"intent": "about_data_source"}
 
     if any(p in low for p in ["daily routine", "routine plan", "my routine", "diet plan timewise"]):
         return {
@@ -765,6 +769,32 @@ def build_menu_image_url(req):
     return f"{public_base}/menu-image.png"
 
 
+def generate_ai_menu_solution(user_text, intent_name, context_text=""):
+    """Gemini-first response generator for menu and free-form queries."""
+    if not GEMINI_API_KEY:
+        return "Gemini API is not configured right now. Please set GEMINI_API_KEY."
+
+    prompt = f"""
+You are AAYU Ayurveda assistant.
+Intent: {intent_name}
+User message: {user_text}
+Context: {context_text}
+
+Rules:
+- User can write in any style. Do not ask fixed input pattern unless necessary.
+- Give practical, safe, concise WhatsApp-friendly response.
+- If emergency signs are present, place emergency warning first.
+- End with: Source: Gemini API
+"""
+
+    try:
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=14)
+        text = (getattr(response, "text", "") or "").strip()
+        return text if text else "I could not generate a response right now."
+    except Exception:
+        return "I could not generate a response right now."
+
+
 def detect_custom_menu_image():
     static_dir = os.path.join(app.root_path, "static")
     if not os.path.isdir(static_dir):
@@ -818,9 +848,19 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
             "kind": "menu_image",
             "caption": (
                 "Here is the visual menu guide.\n"
-                "Reply with a number like 1 or 4, or type your issue directly."
+                "Reply with a number like 1 or 4, or type your issue directly.\n"
+                f"Open directly: {build_menu_image_url(req)}"
             ),
         }
+
+    if intent == "about_data_source":
+        return (
+            "AAYU data sources:\n"
+            "1) Gemini API for final health guidance and menu solutions.\n"
+            "2) Local knowledge files (knowledge.json, structured_db.json) as optional context.\n"
+            "3) SQLite (reminders.db) for reminders/tracker user state only.\n"
+            "Source: Gemini API"
+        )
 
     if intent == "start_consultation":
         USER_STATE.setdefault(user_id, {})["consultation"] = {"step": "age"}
@@ -865,29 +905,13 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
 
     if intent == "ingredient_remedy":
         ingredients = intent_data.get("ingredients") or parse_ingredients_from_text(incoming_msg)
-        if not ingredients:
-            return "Please list your ingredients. Example: I have turmeric, ginger, honey"
-        remedies = get_home_remedies_by_ingredients(ingredients)
-        if not remedies:
-            return "I could not find a suitable remedy with those ingredients."
-        lines = [f"I found remedies using: {', '.join(ingredients)}"]
-        for idx, remedy in enumerate(remedies[:3], start=1):
-            lines.append(
-                f"{idx}. {remedy.get('name', 'Remedy')} for {', '.join(remedy.get('for', [])) or 'general care'}\n"
-                f"   How to use: {remedy.get('instructions', 'Use in small safe quantity.')}"
-            )
-        return "\n".join(lines)
+        context = f"Detected ingredients: {', '.join(ingredients) if ingredients else 'not clearly detected'}"
+        return generate_ai_menu_solution(incoming_msg, "ingredient_remedy", context)
 
     if intent == "mood_support":
         support = get_mood_mind_support(intent_data.get("mood") or incoming_msg)
-        if support:
-            return (
-                f"Mood support ({support.get('dosha', 'dosha balance')}):\n"
-                f"Breath: {support.get('breathwork', 'Slow deep breathing for 5 minutes')}\n"
-                f"Food: {support.get('food', 'Take warm and light meals')}\n"
-                f"Routine: {support.get('routine', 'Keep sleep and wake time regular')}"
-            )
-        return "I am here with you. Try 10 slow breaths, warm water, and a short walk. If this feeling is intense or persistent, please seek professional support."
+        context = f"Mood DB context: {support if support else 'none'}"
+        return generate_ai_menu_solution(incoming_msg, "mood_support", context)
 
     if intent == "tracker":
         water = intent_data.get("water")
@@ -897,39 +921,25 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
             return "Please use: track water 8 sleep 7 diet good"
         result = update_health_tracker(user_id, int(water), int(sleep), str(diet).lower())
         badges = ", ".join(result.get("badges", [])) or "None yet"
-        return (
-            f"Tracker updated.\n"
-            f"Good day: {'Yes' if result.get('good_day') else 'No'}\n"
-            f"Current streak: {result.get('streak', 0)}\n"
-            f"Badges: {badges}"
+        context = (
+            f"Tracker updated: good_day={result.get('good_day')}, "
+            f"streak={result.get('streak', 0)}, badges={badges}"
         )
+        return generate_ai_menu_solution(incoming_msg, "tracker", context)
 
     if intent == "explain":
         condition = (intent_data.get("condition") or find_best_symptom(incoming_msg) or "").strip().lower()
         if not condition:
-            return "Please specify condition. Example: explain acidity"
+            return generate_ai_menu_solution(incoming_msg, "explain", "Condition not explicitly detected")
         info = explain_condition_styles(condition)
-        if not info:
-            return "I do not have a structured explanation for this condition yet."
-        return (
-            f"Condition: {condition}\n"
-            f"Dosha view: {info.get('dosha', 'Unknown')}\n"
-            f"Simple: {info.get('simple', 'N/A')}\n"
-            f"Grandma style: {info.get('grandma', 'N/A')}\n"
-            f"Scientific: {info.get('scientific', 'N/A')}"
-        )
+        return generate_ai_menu_solution(incoming_msg, "explain", f"Condition: {condition}, DB context: {info}")
 
     if intent == "graph":
         condition = (intent_data.get("condition") or find_best_symptom(incoming_msg) or "").strip().lower()
         if not condition:
-            return "Please specify condition. Example: graph acidity"
+            return generate_ai_menu_solution(incoming_msg, "graph", "Condition not explicitly detected")
         links = knowledge_graph_links(condition)
-        if not links:
-            return "No graph links found for this topic yet."
-        lines = [f"Knowledge graph links for {condition}:"]
-        for idx, edge in enumerate(links, start=1):
-            lines.append(f"{idx}. {edge.get('from', '?')} -> {edge.get('to', '?')} ({edge.get('relation', 'related')})")
-        return "\n".join(lines)
+        return generate_ai_menu_solution(incoming_msg, "graph", f"Condition: {condition}, graph links: {links}")
 
     if intent == "reminder_set":
         reminder_time = (intent_data.get("reminder_time") or "").strip()
@@ -991,10 +1001,7 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
         severity = detect_severity(incoming_msg)
         return get_ai_recommendation(symptom, age, severity)
 
-    return (
-        "I understood your message but need one more hint. You can describe in any language or slang. "
-        "For example: I am 23, severe headache since 2 days. Type help to see all options."
-    )
+    return generate_ai_menu_solution(incoming_msg, "free_form_query")
 
 
 @app.route("/", methods=["GET"])
@@ -1097,6 +1104,7 @@ def whatsapp_bot():
             final_reply = ai_rewrite_in_user_style(user_id, incoming_msg, base, "help")
             store_chat_turn(user_id, incoming_msg, final_reply)
             msg.body(final_reply)
+            msg.media(build_menu_image_url(request))
             return xml_twiml_response(resp)
 
         if low == "cancel":
