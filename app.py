@@ -751,7 +751,17 @@ def format_hospitals(hospitals):
 def build_menu_image_url(req):
     public_base = (os.environ.get("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
     if not public_base:
-        public_base = req.url_root.rstrip("/")
+        forwarded_host = (req.headers.get("X-Forwarded-Host", "") or "").strip()
+        host = forwarded_host or req.host
+
+        forwarded_proto = (req.headers.get("X-Forwarded-Proto", "") or "").strip().lower()
+        if forwarded_proto in {"http", "https"}:
+            scheme = forwarded_proto
+        else:
+            # Render/Twilio webhook calls should use HTTPS publicly.
+            scheme = "https" if host and "localhost" not in host and not host.startswith("127.0.0.1") else req.scheme
+
+        public_base = f"{scheme}://{host}".rstrip("/")
     return f"{public_base}/menu-image.png"
 
 
