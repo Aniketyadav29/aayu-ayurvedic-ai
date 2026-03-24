@@ -9,15 +9,27 @@ import urllib.request
 from difflib import get_close_matches
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
-from google import genai
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 # Load API Keys
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "models/gemini-2.0-flash")
+GEMINI_MODEL_CANDIDATES = [
+    GEMINI_MODEL_NAME,
+    "models/gemini-2.0-flash",
+    "models/gemini-2.5-flash",
+    "models/gemini-flash-latest",
+    "models/gemini-pro-latest",
+]
 
-# Initialize the new Google GenAI Client
-client = genai.Client(api_key=GEMINI_API_KEY)
+# Configure SDK exactly in the stable format and keep one reusable model handle.
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    GEMINI_MODEL = genai.GenerativeModel(GEMINI_MODEL_CANDIDATES[0])
+else:
+    GEMINI_MODEL = None
 
 DEFAULT_SYMPTOM_ALIASES = {
     "high temperature": "fever",
@@ -562,16 +574,84 @@ def build_non_ai_recommendation(symptom, age, severity, detailed=False, duration
     return "\n".join(lines)
 
 
+def get_daily_routine_plan(user_text, age=None):
+    """Generate a time-wise Ayurveda daily routine with food and exercise guidance."""
+    symptom = find_best_symptom(user_text or "") or "general wellness"
+    age_hint = age if isinstance(age, int) and 1 <= age <= 120 else None
+
+    fallback = [
+        "🌿 AAYU Daily Routine Planner",
+        f"Profile: age {age_hint if age_hint else 'adult'} | focus: {symptom}",
+        "",
+        "05:30 - 06:00: Wake up, drink 1 glass warm water.",
+        "06:00 - 06:20: Light stretching + 10 minutes deep breathing.",
+        "06:30 - 07:00: Walk / yoga (20-30 minutes).",
+        "07:30: Breakfast: warm, light meal (for example porridge, fruit, soaked nuts).",
+        "10:30: Mid-morning: herbal water or seasonal fruit.",
+        "13:00: Lunch: main meal, fresh cooked food, include vegetables + protein.",
+        "16:30: Evening snack: light snack, avoid deep-fried items.",
+        "18:00 - 18:30: Evening walk or gentle mobility exercises.",
+        "19:30: Dinner: lighter than lunch, easy to digest warm food.",
+        "21:00: Screen-off wind-down, 5 minutes calm breathing.",
+        "22:00: Sleep.",
+        "",
+        "Exercise routine: 5 days/week moderate movement + 2 days gentle recovery/stretching.",
+        "Hydration: sip warm water through the day.",
+        "⚠️ If symptoms worsen or severe signs appear, consult a doctor promptly.",
+    ]
+    fallback_text = "\n".join(fallback)
+
+    if not GEMINI_API_KEY:
+        return fallback_text
+
+    prompt = f"""
+You are an Ayurveda lifestyle planner.
+Create a practical, time-wise daily routine for WhatsApp format.
+
+User message: {user_text}
+Detected age: {age_hint if age_hint else 'not provided'}
+Detected focus symptom: {symptom}
+
+Return plain text only with this structure:
+1) Title line
+2) Time-wise routine from morning to night (at least 8 time slots)
+3) What to eat through the day (time-wise)
+4) Exercise routine (morning + evening)
+5) 1 safety warning line
+
+Rules:
+- Keep it concise and realistic.
+- Use simple language.
+- Avoid prescribing exact medicines/doses.
+"""
+
+    try:
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=14)
+        text = (getattr(response, "text", "") or "").strip()
+        return text if text else fallback_text
+    except Exception:
+        return fallback_text
+
+
 def generate_gemini_with_timeout(prompt, timeout_seconds=12):
     """Call Gemini with a hard timeout without blocking webhook response."""
     result_holder = {"response": None, "error": None}
 
     def _worker():
         try:
-            result_holder["response"] = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-            )
+            if not GEMINI_MODEL:
+                raise ValueError("Gemini API key is not configured")
+
+            last_err = None
+            for model_name in GEMINI_MODEL_CANDIDATES:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    result_holder["response"] = model.generate_content(prompt)
+                    return
+                except Exception as model_err:
+                    last_err = model_err
+
+            raise last_err if last_err else RuntimeError("Gemini call failed for all candidate models")
         except Exception as err:
             result_holder["error"] = err
 
@@ -634,7 +714,9 @@ def analyze_prakriti(answers):
             "secondary dosha, and give 3 concise lifestyle tips.\n"
             f"Answers: {answers}"
         )
-        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        if not GEMINI_MODEL:
+            raise ValueError("Gemini API key is not configured")
+        response = GEMINI_MODEL.generate_content(prompt)
         ai_text = response.text
     except Exception as e:
         print(f"Prakriti AI fallback used: {e}")

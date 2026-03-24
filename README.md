@@ -1,6 +1,6 @@
-# AAYU Ayurvedic WhatsApp Bot
+# Ayurvedic Recommendation System
 
-A Flask + Twilio WhatsApp bot that gives Ayurvedic recommendations from a local knowledge base and falls back to Gemini for unknown symptoms.
+A Python CLI tool that gives Ayurvedic recommendations from a local knowledge base and falls back to Gemini for unknown symptoms.
 
 ## Setup
 
@@ -17,12 +17,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-3. Set environment variables:
+3. Set the Gemini API key as an environment variable:
 
 ```powershell
 $env:GEMINI_API_KEY="YOUR_API_KEY_HERE"
-$env:TWILIO_ACCOUNT_SID="YOUR_TWILIO_SID"
-$env:TWILIO_AUTH_TOKEN="YOUR_TWILIO_AUTH_TOKEN"
 ```
 
 4. (Recommended for production) enforce Twilio signature validation:
@@ -32,6 +30,12 @@ $env:ENFORCE_TWILIO_SIGNATURE="true"
 ```
 
 This requires `TWILIO_AUTH_TOKEN` to be set correctly in your environment.
+
+## Run
+
+```powershell
+python app.py
+```
 
 ## WhatsApp Bot Run
 
@@ -48,54 +52,7 @@ GET /health
 Example local URL:
 
 ```text
-http://127.0.0.1:8080/health
-```
-
-## Input Styles Supported
-
-You can send messages in any of these styles:
-
-1. Structured:
-```text
-23, fever, mild
-```
-
-2. Single symptom:
-```text
-fever
-```
-
-3. Natural paragraph:
-```text
-I am 23 years old and I have severe headache with slight cold since yesterday.
-```
-
-The bot extracts age, symptom, and severity from natural text and responds accordingly.
-
-## Keepalive (24x7)
-
-### GitHub Actions Keepalive (every 5 minutes)
-
-File already added:
-```text
-.github/workflows/keep.yml
-```
-
-Set repository secret in GitHub:
-
-1. Open repository `Settings` -> `Secrets and variables` -> `Actions`
-2. Add secret name: `RENDER_HEALTH_URL`
-3. Add value: `https://aayu-ayurvedic-ai-1.onrender.com/health`
-
-Then push changes to `main`. The workflow will ping the app every 5 minutes.
-
-### 2-minute ping requirement
-
-GitHub Actions does not support every-2-minute cron. For exactly every 2 minutes, use an external cron service (for example cron-job.org) with:
-
-```text
-GET https://aayu-ayurvedic-ai-1.onrender.com/health
-Interval: 2 minutes
+http://127.0.0.1:5000/health
 ```
 
 ## Notes
@@ -103,3 +60,24 @@ Interval: 2 minutes
 - If symptom exists in local database, recommendation is shown from local data.
 - If symptom is not found, app asks Gemini for a formatted recommendation.
 - If API key is not set or API is unavailable, the app shows a clear fallback message.
+
+## New WhatsApp Features
+
+- Visual menu image:
+	- Send `menu image` to receive a visual menu card.
+	- Users can reply with numbers like `1` (start consultation) or `4` (daily routine planner).
+	- To use your own poster image, place it in `static/` with one of these names:
+		- `menu_custom.png`
+		- `menu_custom.jpg`
+		- `menu_custom.jpeg`
+		- `menu_custom.webp`
+	- If file name is different, bot automatically uses the latest image found in `static/`.
+- Daily routine planner:
+	- Send `daily routine for age 28 with acidity` (or similar text).
+	- Bot returns a time-wise routine with morning habits, meals, and exercise.
+
+## Optional Environment Variable
+
+- `PUBLIC_BASE_URL`:
+	- Set this in production so media URLs (menu image) resolve correctly.
+	- Example: `https://your-app.onrender.com`
