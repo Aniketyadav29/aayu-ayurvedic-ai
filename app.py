@@ -1,10 +1,14 @@
 import json
+import logging
 import os
 import re
+import time
 from io import BytesIO
-from difflib import get_close_matches
-from flask import Flask, Response, request, send_file, send_from_directory
+from datetime import datetime
+
+from flask import Flask, Response, abort, request, send_file, send_from_directory
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.request_validator import RequestValidator
 from dotenv import load_dotenv
 
 try:
@@ -13,114 +17,97 @@ try:
 except Exception:
     PIL_AVAILABLE = False
 
-try:
-    from database import (
-        GEMINI_API_KEY,
-        analyze_prakriti,
-        disable_daily_reminder,
-        explain_condition_styles,
-        find_best_symptom,
-        find_nearest_hospitals,
-        generate_gemini_with_timeout,
-        geocode_address,
-        get_all_symptoms,
-        get_ayurvedic_knowledge,
-        get_ai_detailed_recommendation,
-        get_ai_recommendation,
-        get_home_remedies_by_ingredients,
-        get_mood_mind_support,
-        get_daily_routine_plan,
-        get_menu_database_classification,
-        load_structured_db,
-        get_structured_conditions,
-        get_user_daily_reminder,
-        knowledge_graph_links,
-        parse_ingredients_from_text,
-        set_user_timezone,
-        upsert_daily_reminder,
-        update_health_tracker,
-    )
-except ImportError:
-    print("database.py not found. Running in limited mode.")
-    GEMINI_API_KEY = ""
+from database import (
+    GEMINI_API_KEY,
+    get_user_state,
+    save_user_state,
+    find_best_symptom,
+    load_structured_db,
+    find_nearest_hospitals,
+    geocode_address,
+    get_mood_mind_support,
+    update_health_tracker,
+    explain_condition_styles,
+    knowledge_graph_links,
+    upsert_daily_reminder,
+    set_user_timezone,
+    disable_daily_reminder,
+    get_daily_routine_plan,
+    get_user_daily_reminder,
+    get_ai_recommendation,
+    generate_gemini_with_timeout,
+    get_menu_database_classification,
+    parse_ingredients_from_text,
+)
 
-    def _missing(*_args, **_kwargs):
-        return None
+from utils import (
+    sanitize_user_input,
+    normalize_user_text,
+    get_user_language_hint,
+    detect_age,
+    detect_severity,
+    is_emergency,
+    PRAKRITI_DEFAULT_QUESTIONS,
+)
 
-    analyze_prakriti = _missing
-    disable_daily_reminder = _missing
-    explain_condition_styles = _missing
-    find_best_symptom = _missing
-    find_nearest_hospitals = _missing
-    generate_gemini_with_timeout = _missing
-    geocode_address = _missing
-    get_all_symptoms = lambda: ()
-    get_ayurvedic_knowledge = _missing
-    get_ai_detailed_recommendation = _missing
-    get_ai_recommendation = lambda _s, _a, _v: "AI logic is currently offline."
-    get_home_remedies_by_ingredients = lambda _i: []
-    get_mood_mind_support = _missing
-    get_daily_routine_plan = lambda _t, _a=None: "Daily routine planner is currently offline."
-    get_menu_database_classification = lambda: "Database classification is currently offline."
-    load_structured_db = lambda: {}
-    get_structured_conditions = lambda: {}
-    get_user_daily_reminder = _missing
-    knowledge_graph_links = lambda _t: []
-    parse_ingredients_from_text = lambda _t: []
-    set_user_timezone = lambda _u, _t: False
-    upsert_daily_reminder = _missing
-    update_health_tracker = lambda *_args, **_kwargs: {"streak": 0, "badges": [], "good_day": False}
+from intents import extract_intent, _SIMPLE_INTENTS
+from rag import generate_rag_response
+from flows import handle_guided_consultation, handle_prakriti_flow
 
 load_dotenv()
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("aayu")
+
 app = Flask(__name__)
-USER_STATE = {}
 AI_BRAIN_ENABLED = os.environ.get("AAYU_AI_BRAIN_ENABLED", "true").lower() == "true"
-RAG_PRIMARY_ENABLED = os.environ.get("AAYU_RAG_PRIMARY_ENABLED", "true").lower() == "true"
+ENFORCE_TWILIO_SIGNATURE = os.environ.get("ENFORCE_TWILIO_SIGNATURE", "false").lower() == "true"
+REMINDER_CRON_TOKEN = os.environ.get("REMINDER_CRON_TOKEN", "")
 
-EMERGENCY_KEYWORDS = [
-    "chest pain",
-    "difficulty breathing",
-    "breathing problem",
-    "cannot breathe",
-    "stroke",
-    "unconscious",
-    "fainting",
-    "severe bleeding",
-    "suicidal",
-]
+# Twilio request validator for webhook signature checking
+_twilio_auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+_twilio_validator = RequestValidator(_twilio_auth_token) if _twilio_auth_token else None
 
-SEVERITY_WORDS = {
-    "mild": ["mild", "light", "thoda", "minor"],
-    "moderate": ["moderate", "medium", "normal"],
-    "severe": ["severe", "high", "bahut", "extreme", "intense", "worst"],
-}
+# ---------------------------------------------------------------------------
+# Rate Limiter (simple in-memory, per-user)
+# ---------------------------------------------------------------------------
+_RATE_LIMIT_WINDOW = 60  # seconds
+_RATE_LIMIT_MAX = 20     # max messages per window
+_rate_limit_store = {}  # user_id -> list of timestamps
 
-PRAKRITI_DEFAULT_QUESTIONS = [
-    "How is your body frame: thin, medium, or broad?",
-    "How is your digestion: irregular, strong, or slow?",
-    "How is your sleep: light, medium, or deep?",
-    "How is your mental tendency: anxious, focused, or calm?",
-]
 
-LOCAL_TEXT_NORMALIZATION = {
-    "sir dard": "headache",
-    "sar dard": "headache",
-    "head pain": "headache",
-    "pet dard": "stomach pain",
-    "bukhar": "fever",
-    "khansi": "cough",
-    "sardi": "cold",
-    "acidity ho rahi": "acidity",
-    "gas ho rahi": "acidity",
-    "ulti": "nausea",
-    "saanse": "breathing",
-    "सिर दर्द": "headache",
-    "बुखार": "fever",
-    "खांसी": "cough",
-    "सर्दी": "cold",
-    "घबराहट": "anxious",
-}
+def _is_rate_limited(user_id):
+    """Return True if user has exceeded rate limit."""
+    now = time.time()
+    timestamps = _rate_limit_store.get(user_id, [])
+    # Prune old entries
+    timestamps = [t for t in timestamps if now - t < _RATE_LIMIT_WINDOW]
+    if len(timestamps) >= _RATE_LIMIT_MAX:
+        _rate_limit_store[user_id] = timestamps
+        return True
+    timestamps.append(now)
+    _rate_limit_store[user_id] = timestamps
+    return False
+
+
+def _validate_twilio_signature(req):
+    """Validate Twilio webhook signature. Returns True if valid or validation is disabled."""
+    if not ENFORCE_TWILIO_SIGNATURE:
+        return True
+    if not _twilio_validator:
+        logger.warning("Twilio signature enforcement enabled but TWILIO_AUTH_TOKEN not set")
+        return False
+    signature = req.headers.get("X-Twilio-Signature", "")
+    url = req.url
+    params = req.form.to_dict()
+    return _twilio_validator.validate(url, params, signature)
 
 
 def xml_twiml_response(resp):
@@ -177,574 +164,52 @@ def get_help_menu(profile_name="there"):
     )
 
 
-def parse_json_from_text(text):
-    if not text:
-        return None
-    text = text.strip()
-
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-
-    block = re.search(r"\{[\s\S]*\}", text)
-    if not block:
-        return None
-
-    try:
-        return json.loads(block.group(0))
-    except Exception:
-        return None
-
-
-def detect_severity(text):
-    msg = normalize_user_text(text).lower()
-    for level, words in SEVERITY_WORDS.items():
-        if any(w in msg for w in words):
-            return level
-    return "moderate"
-
-
-def detect_age(text):
-    match = re.search(r"\b(1[0-1][0-9]|120|[1-9]?[0-9])\b", text or "")
-    if not match:
-        return None
-    age = int(match.group(1))
-    return age if 1 <= age <= 120 else None
-
-
-def is_emergency(text):
-    msg = normalize_user_text(text).lower()
-    return any(k in msg for k in EMERGENCY_KEYWORDS)
-
-
-def normalize_user_text(text):
-    normalized = (text or "").lower()
-    for src, dest in LOCAL_TEXT_NORMALIZATION.items():
-        normalized = normalized.replace(src, dest)
-    return normalized
-
-
-def extract_intent_with_ai(text):
-    if not GEMINI_API_KEY:
-        return None
-
-    prompt = f"""
-You classify user messages for an Ayurveda WhatsApp assistant.
-Return only valid compact JSON.
-
-Allowed intents:
-- help
-- greet
-- start_consultation
-- cancel
-- menu_image
-- recommendation
-- daily_routine_plan
-- hospital_near_address
-- ingredient_remedy
-- mood_support
-- tracker
-- explain
-- graph
-- reminder_set
-- reminder_off
-- timezone_set
-- prakriti_start
-- about_data_source
-- database_classification
-- emergency
-- unknown
-
-Also extract fields when present:
-age(number), symptom(string), severity(mild|moderate|severe), address(string),
-ingredients(array of strings), mood(string), condition(string),
-reminder_time(HH:MM), reminder_message(string), timezone(string),
-water(number), sleep(number), diet(string)
-
-User message: {text}
-"""
-
-    try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=8)
-        return parse_json_from_text(getattr(response, "text", ""))
-    except Exception:
-        return None
-
-
-def heuristic_extract(text):
-    msg = (text or "").strip()
-    low = normalize_user_text(msg)
-    extracted = {"intent": "unknown"}
-
-    menu_shortcuts = {
-        "1": {"intent": "start_consultation"},
-        "2": {"intent": "recommendation", "age": detect_age(msg), "symptom": find_best_symptom(low), "severity": detect_severity(low)},
-        "3": {"intent": "ingredient_remedy", "ingredients": parse_ingredients_from_text(low)},
-        "4": {"intent": "daily_routine_plan", "age": detect_age(msg), "symptom": find_best_symptom(low)},
-        "5": {"intent": "mood_support", "mood": low},
-        "6": {"intent": "hospital_near_address", "address": ""},
-        "7": {"intent": "reminder_set", "reminder_time": "", "reminder_message": ""},
-    }
-    if low in menu_shortcuts:
-        return menu_shortcuts[low]
-
-    if low in {"help", "menu"}:
-        return {"intent": "help"}
-    if low in {"hi", "hii", "hello", "hey", "namaste", "aayu"}:
-        return {"intent": "greet"}
-    if low == "start":
-        return {"intent": "start_consultation"}
-    if low == "cancel":
-        return {"intent": "cancel"}
-    if low in {"menu image", "image menu", "menu photo", "menu pic", "send menu image"}:
-        return {"intent": "menu_image"}
-    if low == "prakriti":
-        return {"intent": "prakriti_start"}
-
-    if any(k in low for k in ["database", "data source", "source of answer", "which db", "kis database"]):
-        return {"intent": "about_data_source"}
-
-    if any(k in low for k in ["classify database", "database classification", "classify db", "menu database"]):
-        return {"intent": "database_classification"}
-
-    if any(p in low for p in ["daily routine", "routine plan", "my routine", "diet plan timewise"]):
-        return {
-            "intent": "daily_routine_plan",
-            "age": detect_age(low),
-            "symptom": find_best_symptom(low),
-        }
-
-    if is_emergency(low):
-        extracted["intent"] = "emergency"
-        return extracted
-
-    if low.startswith("timezone "):
-        return {"intent": "timezone_set", "timezone": msg.split(" ", 1)[1].strip()}
-
-    if "reminder off" in low:
-        return {"intent": "reminder_off"}
-
-    reminder_match = re.search(r"reminder\s+at\s+([0-2][0-9]:[0-5][0-9])\s+(.+)", low)
-    if reminder_match:
-        return {
-            "intent": "reminder_set",
-            "reminder_time": reminder_match.group(1),
-            "reminder_message": reminder_match.group(2).strip(),
-        }
-
-    if low.startswith("hospital near"):
-        address = msg[len("hospital near") :].strip()
-        return {"intent": "hospital_near_address", "address": address}
-
-    if low.startswith("graph "):
-        return {"intent": "graph", "condition": msg.split(" ", 1)[1].strip()}
-
-    if low.startswith("explain "):
-        return {"intent": "explain", "condition": msg.split(" ", 1)[1].strip()}
-
-    if "track" in low and "water" in low and "sleep" in low and "diet" in low:
-        water_match = re.search(r"water\s+(\d+)", low)
-        sleep_match = re.search(r"sleep\s+(\d+)", low)
-        diet_match = re.search(r"diet\s+([a-z]+)", low)
-        return {
-            "intent": "tracker",
-            "water": int(water_match.group(1)) if water_match else None,
-            "sleep": int(sleep_match.group(1)) if sleep_match else None,
-            "diet": diet_match.group(1) if diet_match else None,
-        }
-
-    ingredients = parse_ingredients_from_text(low)
-    if ingredients and any(w in low for w in ["i have", "ingredients", "with", "available"]):
-        return {"intent": "ingredient_remedy", "ingredients": ingredients}
-
-    if any(m in low for m in ["anxious", "anxiety", "stressed", "stress", "sad", "low"]):
-        return {"intent": "mood_support", "mood": low}
-
-    if "," in msg:
-        parts = [p.strip() for p in msg.split(",")]
-        if len(parts) >= 3 and parts[0].isdigit():
-            return {
-                "intent": "recommendation",
-                "age": int(parts[0]),
-                "symptom": parts[1].lower(),
-                "severity": parts[2].lower(),
-            }
-
-    guessed_symptom = find_best_symptom(low)
-    if guessed_symptom:
-        return {
-            "intent": "recommendation",
-            "age": detect_age(low),
-            "symptom": guessed_symptom,
-            "severity": detect_severity(low),
-        }
-
-    return extracted
-
-
-def extract_intent(text):
-    normalized = normalize_user_text(text)
-
-    # Hard-priority medical detection so disease paragraphs are never misrouted to "start".
-    def _looks_like_medical_query(msg):
-        symptom = find_best_symptom(msg)
-        has_age = detect_age(msg) is not None
-        has_severity_word = detect_severity(msg) in {"mild", "severe"}
-        has_duration = bool(re.search(r"\b\d+\s*(day|days|week|weeks|month|months)\b", msg))
-        has_health_phrase = any(
-            p in msg
-            for p in [
-                "i have",
-                "i am feeling",
-                "pain",
-                "fever",
-                "headache",
-                "cough",
-                "cold",
-                "acidity",
-                "bukhar",
-                "sir dard",
-            ]
-        )
-
-        if is_emergency(msg):
-            return True
-        return bool(symptom) or (has_age and (has_health_phrase or has_duration)) or (has_severity_word and has_health_phrase)
-
-    medical_query = _looks_like_medical_query(normalized)
-
-    ai = extract_intent_with_ai(text)
-    if ai and isinstance(ai, dict) and ai.get("intent"):
-        ai_intent = (ai.get("intent") or "").lower()
-
-        # Override weak conversational intents if message is clearly a health query.
-        if medical_query and ai_intent in {"start_consultation", "greet", "help", "unknown"}:
-            ai["intent"] = "recommendation"
-            ai["age"] = ai.get("age") or detect_age(normalized)
-            ai["symptom"] = ai.get("symptom") or find_best_symptom(normalized)
-            ai["severity"] = ai.get("severity") or detect_severity(normalized)
-
-        return ai
-
-    heur = heuristic_extract(text)
-    if medical_query and (heur.get("intent") in {"start_consultation", "greet", "help", "unknown"}):
-        return {
-            "intent": "recommendation",
-            "age": detect_age(normalized),
-            "symptom": find_best_symptom(normalized),
-            "severity": detect_severity(normalized),
-        }
-
-    return heur
-
-
-def ai_understand_user_message(user_text):
-    """RAG Step 1: AI understands free-form user message and extracts medical profile."""
-    if not GEMINI_API_KEY:
-        return None
-
-    prompt = f"""
-You are medical-intent extractor for Ayurveda assistant.
-Return compact JSON only.
-
-Required JSON keys:
-- age (number or null)
-- symptom_text (string)
-- normalized_symptom (string or null)
-- severity (mild|moderate|severe)
-- duration (string or null)
-- emergency (true/false)
-- language_style (string)
-- intent (recommendation|emergency|other)
-
-User message:
-{user_text}
-"""
-
-    try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=8)
-        parsed = parse_json_from_text(getattr(response, "text", ""))
-        return parsed if isinstance(parsed, dict) else None
-    except Exception:
-        return None
-
-
-def ai_create_retrieval_plan(user_text, understanding):
-    """RAG Step 2: AI creates retrieval keywords and canonical symptom candidates."""
-    if not GEMINI_API_KEY:
-        return None
-
-    prompt = f"""
-You are retrieval planner for Ayurveda RAG.
-Return compact JSON only.
-
-Schema:
-- primary_symptom (string or null)
-- symptom_candidates (array of strings)
-- keywords (array of strings)
-- severity (mild|moderate|severe)
-- age (number or null)
-
-User message:
-{user_text}
-
-Understanding JSON:
-{json.dumps(understanding or {}, ensure_ascii=False)}
-"""
-
-    try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=8)
-        parsed = parse_json_from_text(getattr(response, "text", ""))
-        return parsed if isinstance(parsed, dict) else None
-    except Exception:
-        return None
-
-
-def _pick_best_local_symptom(plan, user_text):
-    candidates = []
-    if isinstance(plan, dict):
-        primary = (plan.get("primary_symptom") or "").strip().lower()
-        if primary:
-            candidates.append(primary)
-        for c in plan.get("symptom_candidates", []) or []:
-            c = str(c).strip().lower()
-            if c:
-                candidates.append(c)
-
-    normalized_text = normalize_user_text(user_text)
-    guessed = find_best_symptom(normalized_text)
-    if guessed:
-        candidates.append(guessed)
-
-    known = set(get_all_symptoms() or ())
-    for c in candidates:
-        if c in known:
-            return c
-
-    if candidates and known:
-        close = get_close_matches(candidates[0], list(known), n=1, cutoff=0.72)
-        if close:
-            return close[0]
-
-    return guessed
-
-
-def retrieve_rag_evidence(user_text, understanding, retrieval_plan):
-    """RAG Step 3: DB retrieval (knowledge.json + structured_db.json) using AI retrieval plan."""
-    symptom = _pick_best_local_symptom(retrieval_plan, user_text)
-    structured_db = load_structured_db() or {}
-    conditions = structured_db.get("conditions", {})
-
-    local_record = get_ayurvedic_knowledge(symptom) if symptom else None
-    structured_record = conditions.get(symptom) if symptom else None
-
-    keywords = []
-    if isinstance(retrieval_plan, dict):
-        keywords = [str(k).strip().lower() for k in retrieval_plan.get("keywords", []) or [] if str(k).strip()]
-
-    graph_hits = []
-    for key in [symptom] + keywords:
-        if key:
-            graph_hits.extend(knowledge_graph_links(key) or [])
-
-    # Keep evidence concise for final synthesis.
-    graph_hits = graph_hits[:6]
-
-    return {
-        "symptom": symptom,
-        "local_record": local_record,
-        "structured_record": structured_record,
-        "graph_links": graph_hits,
-        "understanding": understanding or {},
-        "retrieval_plan": retrieval_plan or {},
-    }
-
-
-def ai_generate_rag_answer(user_text, evidence):
-    """RAG Step 4: Final AI answer grounded on retrieved DB evidence."""
-    if not GEMINI_API_KEY:
-        return None
-
-    prompt = f"""
-You are AAYU medical assistant.
-Generate final answer using DB evidence only where available.
-If evidence is missing, clearly say 'limited database match' and give safe generic advice.
-Keep output concise and WhatsApp-friendly.
-Maintain user's language/slang style based on message.
-Always include red-flag warning if severe/emergency signs are present.
-
-User message:
-{user_text}
-
-Retrieved evidence JSON:
-{json.dumps(evidence, ensure_ascii=False)}
-"""
-
-    try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=12)
-        text = (getattr(response, "text", "") or "").strip()
-        return text or None
-    except Exception:
-        return None
-
-
-def generate_rag_response(user_text):
-    """Full RAG pipeline required by user: AI -> AI -> DB -> AI -> answer."""
-    if not RAG_PRIMARY_ENABLED:
-        return None
-
-    understanding = ai_understand_user_message(user_text)
-    if not understanding:
-        return None
-
-    retrieval_plan = ai_create_retrieval_plan(user_text, understanding)
-    if not retrieval_plan:
-        return None
-
-    evidence = retrieve_rag_evidence(user_text, understanding, retrieval_plan)
-    final_answer = ai_generate_rag_answer(user_text, evidence)
-    return final_answer
-
-
-def get_user_language_hint(user_text):
-    text = user_text or ""
-    if re.search(r"[\u0900-\u097F]", text):
-        return "Hindi"
-    if any(token in text.lower() for token in ["hai", "mera", "mujhe", "kr", "kya", "nhi"]):
-        return "Hinglish"
-    return "English"
-
-
-def ai_rewrite_in_user_style(user_id, user_text, base_response, intent_name):
+def ai_rewrite_in_user_style(state, user_text, base_response, intent_name):
     if not AI_BRAIN_ENABLED or not GEMINI_API_KEY:
+        return base_response
+
+    # Skip expensive style rewrite for simple/structural intents
+    if intent_name in _SIMPLE_INTENTS:
         return base_response
 
     if not base_response:
         return base_response
 
-    state = USER_STATE.setdefault(user_id, {})
-    state["language_hint"] = state.get("language_hint") or get_user_language_hint(user_text)
-    history = state.get("history", [])[-4:]
-    history_blob = "\n".join(
-        [
-            f"U: {item.get('user', '')}\nA: {item.get('assistant', '')}"
-            for item in history
-            if isinstance(item, dict)
-        ]
-    )
+    lang_hint = get_user_language_hint(user_text)
+    history = state.get("history", [])
+    history_str = ""
+    if history:
+        history_str = "Recent Chat History:\n" + "\n".join(
+            f"User: {h.get('user')}\nAssistant: {h.get('assistant')}"
+            for h in history
+        )
 
     prompt = f"""
-You are AAYU conversation stylist.
-Rewrite the assistant response so it matches the user's language/slang and tone naturally.
+You rewrite general Ayurvedic advice to match the patient's language and tone.
+Instructions:
+- Keep the exact original health advice details, recommendations, warnings, and structure intact.
+- Translate or adapt the tone to: {lang_hint} (Hindi, Hinglish, or English).
+- Keep formatting concise and WhatsApp-friendly (using simple bullet points and clear emojis).
+{history_str}
 
-Rules:
-1) Keep all facts, medical cautions, numbers, times, and action steps unchanged.
-2) Do not remove emergency warnings.
-3) Keep the same intent and outcome.
-4) Keep response concise and WhatsApp-friendly.
-5) Use the same language style as user (Hindi/Hinglish/English/vernacular mix).
-6) Return plain text only.
-
-Intent: {intent_name}
-Detected language hint: {state.get('language_hint', 'English')}
-
-Recent conversation:
-{history_blob}
-
-Latest user message:
-{user_text}
-
-Base assistant response:
+Original text:
 {base_response}
-"""
 
+Rewritten plain text:
+"""
     try:
-        rewritten = generate_gemini_with_timeout(prompt, timeout_seconds=8)
-        text = (getattr(rewritten, "text", "") or "").strip()
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=12)
+        text = (getattr(response, "text", "") or "").strip()
         return text if text else base_response
     except Exception:
         return base_response
 
 
-def store_chat_turn(user_id, user_text, assistant_text):
-    state = USER_STATE.setdefault(user_id, {})
+def store_chat_turn(state, user_text, assistant_text):
     history = state.setdefault("history", [])
     history.append({"user": user_text, "assistant": assistant_text})
     if len(history) > 12:
         state["history"] = history[-12:]
-
-
-def handle_guided_consultation(user_id, incoming_msg):
-    state = USER_STATE.setdefault(user_id, {})
-    flow = state.get("consultation")
-    if not flow:
-        return None
-
-    step = flow.get("step", "age")
-    text = incoming_msg.strip()
-
-    if step == "age":
-        age = detect_age(text)
-        if not age:
-            return "Please tell your age in number. Example: 23"
-        flow["age"] = age
-        flow["step"] = "symptom"
-        return "What is your main symptom? You can reply naturally."
-
-    if step == "symptom":
-        symptom = find_best_symptom(text) or text.lower()
-        flow["symptom"] = symptom
-        flow["step"] = "severity"
-        return "How severe is it: mild, moderate, or severe?"
-
-    if step == "severity":
-        flow["severity"] = detect_severity(text)
-        flow["step"] = "duration"
-        return "How long have you had this issue? Example: 2 days"
-
-    if step == "duration":
-        flow["duration"] = text
-        flow["step"] = "reason"
-        return "Any possible trigger or reason you noticed?"
-
-    if step == "reason":
-        flow["pain_reason"] = text
-        flow["step"] = "activities"
-        return "Any recent activity that may be linked?"
-
-    if step == "activities":
-        flow["activities"] = text
-        result = get_ai_detailed_recommendation(
-            flow.get("symptom", "unknown"),
-            flow.get("age", "unknown"),
-            flow.get("severity", "moderate"),
-            flow.get("duration", "not provided"),
-            flow.get("pain_reason", "not provided"),
-            flow.get("activities", "not provided"),
-        )
-        state.pop("consultation", None)
-        return result
-
-    return None
-
-
-def handle_prakriti_flow(user_id, incoming_msg):
-    state = USER_STATE.setdefault(user_id, {})
-    flow = state.get("prakriti")
-    if not flow:
-        return None
-
-    flow["answers"].append(incoming_msg.strip())
-    flow["index"] += 1
-    questions = flow["questions"]
-
-    if flow["index"] < len(questions):
-        return questions[flow["index"]]
-
-    result = analyze_prakriti(flow["answers"])
-    state.pop("prakriti", None)
-    return f"Prakriti analysis:\n\n{result}"
 
 
 def format_hospitals(hospitals):
@@ -770,8 +235,7 @@ def build_menu_image_url(req):
         if forwarded_proto in {"http", "https"}:
             scheme = forwarded_proto
         else:
-            # Render/Twilio webhook calls should use HTTPS publicly.
-            scheme = "https" if host and "localhost" not in host and not host.startswith("127.0.0.1") else req.scheme
+            scheme = "https" if host and "localhost" not in host and not host.startswith("127.0.0.1") else "http"
 
         public_base = f"{scheme}://{host}".rstrip("/")
     return f"{public_base}/menu-image.png"
@@ -834,12 +298,11 @@ def detect_custom_menu_image():
     if not candidates:
         return None
 
-    # Use most recently added image if user did not use a preferred filename.
     candidates.sort(reverse=True)
     return candidates[0][1]
 
 
-def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, req):
+def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, req, state):
     intent = (intent_data.get("intent") or "unknown").lower()
     low = normalize_user_text(incoming_msg)
 
@@ -847,8 +310,8 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
         return get_help_menu(profile_name)
 
     if intent == "cancel":
-        USER_STATE.setdefault(user_id, {}).pop("consultation", None)
-        USER_STATE.setdefault(user_id, {}).pop("prakriti", None)
+        state.pop("consultation", None)
+        state.pop("prakriti", None)
         return "Conversation flow cancelled. You can type start or help anytime."
 
     if intent == "menu_image":
@@ -874,19 +337,25 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
         return get_menu_database_classification()
 
     if intent == "start_consultation":
-        USER_STATE.setdefault(user_id, {})["consultation"] = {"step": "age"}
+        state["consultation"] = {"step": "age"}
         return "Guided consultation started. Please tell your age."
 
     if intent == "prakriti_start":
         questions = PRAKRITI_DEFAULT_QUESTIONS
         try:
-            q = [x.get("q") for x in load_structured_db().get("prakriti_questions", []) if isinstance(x, dict)]
+            raw_q = load_structured_db().get("prakriti_questions", [])
+            q = []
+            for x in raw_q:
+                if isinstance(x, dict) and "q" in x:
+                    q.append(x["q"])
+                elif isinstance(x, str):
+                    q.append(x)
             if q:
                 questions = q
         except Exception:
             pass
 
-        USER_STATE.setdefault(user_id, {})["prakriti"] = {"index": 0, "answers": [], "questions": questions}
+        state["prakriti"] = {"index": 0, "answers": [], "questions": questions}
         return f"Prakriti analyzer started.\n\n{questions[0]}"
 
     if intent == "emergency" or is_emergency(low):
@@ -1001,7 +470,7 @@ def handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, 
         severity = (intent_data.get("severity") or detect_severity(incoming_msg)).lower().strip()
         return get_ai_recommendation(symptom, age, severity)
 
-    # Free-form fallback: try symptom extraction from any slang paragraph.
+    # Free-form fallback
     symptom = find_best_symptom(low)
     if symptom:
         rag_answer = generate_rag_response(incoming_msg)
@@ -1093,9 +562,14 @@ def menu_image_png():
 @app.route("/whatsapp", methods=["POST"])
 @app.route("/whatsapp/", methods=["POST"])
 def whatsapp_bot():
-    print("\n--- NEW MESSAGE RECEIVED ---")
+    # --- Twilio signature validation ---
+    if not _validate_twilio_signature(request):
+        logger.warning("Invalid Twilio signature — rejecting request")
+        abort(403)
+
+    logger.info("--- NEW MESSAGE RECEIVED ---")
     incoming_msg = request.values.get("Body", "").strip()
-    print(f"Content: '{incoming_msg}'")
+    logger.info("Content: '%s'", incoming_msg)
 
     resp = MessagingResponse()
     msg = resp.message()
@@ -1103,46 +577,62 @@ def whatsapp_bot():
     profile_name = request.values.get("ProfileName", "there")
 
     try:
+        # --- Rate limiting ---
+        if _is_rate_limited(user_id):
+            msg.body("You are sending messages too fast. Please wait a moment and try again.")
+            return xml_twiml_response(resp)
+
         if not incoming_msg and not request.values.get("Latitude"):
             msg.body("Please send a message. Type help to see what I can do.")
             return xml_twiml_response(resp)
 
+        # Load persistent state
+        state = get_user_state(user_id)
+
         low = incoming_msg.lower().strip()
         if low in {"help", "menu"}:
-            USER_STATE.setdefault(user_id, {}).pop("consultation", None)
-            USER_STATE.setdefault(user_id, {}).pop("prakriti", None)
+            state.pop("consultation", None)
+            state.pop("prakriti", None)
+            save_user_state(user_id, state)
             base = get_help_menu(profile_name)
-            final_reply = ai_rewrite_in_user_style(user_id, incoming_msg, base, "help")
-            store_chat_turn(user_id, incoming_msg, final_reply)
+            final_reply = ai_rewrite_in_user_style(state, incoming_msg, base, "help")
+            store_chat_turn(state, incoming_msg, final_reply)
+            save_user_state(user_id, state)
             msg.body(final_reply)
             msg.media(build_menu_image_url(request))
             return xml_twiml_response(resp)
 
         if low == "cancel":
-            USER_STATE.setdefault(user_id, {}).pop("consultation", None)
-            USER_STATE.setdefault(user_id, {}).pop("prakriti", None)
+            state.pop("consultation", None)
+            state.pop("prakriti", None)
+            save_user_state(user_id, state)
             base = "Conversation flow cancelled. You can type start or help anytime."
-            final_reply = ai_rewrite_in_user_style(user_id, incoming_msg, base, "cancel")
-            store_chat_turn(user_id, incoming_msg, final_reply)
+            final_reply = ai_rewrite_in_user_style(state, incoming_msg, base, "cancel")
+            store_chat_turn(state, incoming_msg, final_reply)
+            save_user_state(user_id, state)
             msg.body(final_reply)
             return xml_twiml_response(resp)
 
-        guided_reply = handle_guided_consultation(user_id, incoming_msg)
+        guided_reply = handle_guided_consultation(state, incoming_msg)
         if guided_reply:
-            final_reply = ai_rewrite_in_user_style(user_id, incoming_msg, guided_reply, "guided_consultation")
-            store_chat_turn(user_id, incoming_msg, final_reply)
+            save_user_state(user_id, state)
+            final_reply = ai_rewrite_in_user_style(state, incoming_msg, guided_reply, "guided_consultation")
+            store_chat_turn(state, incoming_msg, final_reply)
+            save_user_state(user_id, state)
             msg.body(final_reply)
             return xml_twiml_response(resp)
 
-        prakriti_reply = handle_prakriti_flow(user_id, incoming_msg)
+        prakriti_reply = handle_prakriti_flow(state, incoming_msg)
         if prakriti_reply:
-            final_reply = ai_rewrite_in_user_style(user_id, incoming_msg, prakriti_reply, "prakriti")
-            store_chat_turn(user_id, incoming_msg, final_reply)
+            save_user_state(user_id, state)
+            final_reply = ai_rewrite_in_user_style(state, incoming_msg, prakriti_reply, "prakriti")
+            store_chat_turn(state, incoming_msg, final_reply)
+            save_user_state(user_id, state)
             msg.body(final_reply)
             return xml_twiml_response(resp)
 
         intent_data = extract_intent(incoming_msg)
-        response_text = handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, request)
+        response_text = handle_main_intent(user_id, phone, profile_name, incoming_msg, intent_data, request, state)
         intent_name = (intent_data.get("intent") or "unknown") if isinstance(intent_data, dict) else "unknown"
 
         if isinstance(response_text, dict) and response_text.get("kind") == "menu_image":
@@ -1150,21 +640,81 @@ def whatsapp_bot():
             media_url = build_menu_image_url(request)
             msg.body(caption)
             msg.media(media_url)
-            store_chat_turn(user_id, incoming_msg, f"{caption}\n[Image: {media_url}]")
+            store_chat_turn(state, incoming_msg, f"{caption}\n[Image: {media_url}]")
+            save_user_state(user_id, state)
             return xml_twiml_response(resp)
 
-        final_reply = ai_rewrite_in_user_style(user_id, incoming_msg, response_text, intent_name)
-        store_chat_turn(user_id, incoming_msg, final_reply)
+        final_reply = ai_rewrite_in_user_style(state, incoming_msg, response_text, intent_name)
+        store_chat_turn(state, incoming_msg, final_reply)
+        save_user_state(user_id, state)
         msg.body(final_reply)
         return xml_twiml_response(resp)
 
     except Exception as e:
-        print(f"ERROR: {e}")
+        logger.exception("Unhandled error processing message: %s", e)
         msg.body("I am currently balancing my energies. Please try again in a moment.")
         return xml_twiml_response(resp)
 
 
+@app.route("/send-reminders", methods=["POST"])
+def send_reminders():
+    token = request.headers.get("X-Reminder-Token", "")
+    if REMINDER_CRON_TOKEN and token != REMINDER_CRON_TOKEN:
+        logger.warning("Unauthorized /send-reminders call")
+        abort(403)
+
+    try:
+        from database import get_all_enabled_daily_reminders, mark_daily_reminder_sent
+        from twilio.rest import Client as TwilioClient
+    except ImportError as exc:
+        logger.error("Cannot import reminder dependencies: %s", exc)
+        return {"error": "dependencies unavailable"}, 500
+
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    from_number = os.environ.get("TWILIO_NUMBER", "")
+
+    if not account_sid or not auth_token or not from_number:
+        logger.error("Twilio credentials not configured for reminders")
+        return {"error": "twilio not configured"}, 500
+
+    client = TwilioClient(account_sid, auth_token)
+    reminders = get_all_enabled_daily_reminders()
+    sent_count = 0
+
+    for rem in reminders:
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(rem.get("timezone", "Asia/Kolkata"))
+            now_in_tz = datetime.now(tz)
+            current_time_hhmm = now_in_tz.strftime("%H:%M")
+            current_date = now_in_tz.strftime("%Y-%m-%d")
+
+            if rem.get("reminder_time") != current_time_hhmm:
+                continue
+            if rem.get("last_sent_date") == current_date:
+                continue
+
+            to_number = rem.get("phone", "")
+            if not to_number:
+                continue
+
+            body = f"🌿 AAYU Reminder: {rem.get('reminder_message', 'Stay healthy!')}"
+            client.messages.create(
+                body=body,
+                from_=from_number,
+                to=f"whatsapp:{to_number}" if not to_number.startswith("whatsapp:") else to_number,
+            )
+            mark_daily_reminder_sent(rem["user_id"], current_date)
+            sent_count += 1
+            logger.info("Reminder sent to %s", rem["user_id"])
+        except Exception as exc:
+            logger.error("Failed to send reminder to %s: %s", rem.get("user_id"), exc)
+
+    return {"sent": sent_count, "total_checked": len(reminders)}, 200
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"AAYU Server Starting on Port {port}...")
+    logger.info("AAYU Server Starting on Port %d...", port)
     app.run(host="0.0.0.0", port=port, debug=False)

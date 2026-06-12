@@ -1,6 +1,7 @@
-import os
 import json
+import logging
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -11,6 +12,8 @@ from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 import google.generativeai as genai
 from dotenv import load_dotenv
+
+logger = logging.getLogger("aayu.database")
 
 # Load API Keys
 load_dotenv()
@@ -65,6 +68,62 @@ DEFAULT_SYMPTOM_ALIASES = {
 TRACKER_STATE = {}
 REMINDER_DB_PATH = "reminders.db"
 
+# ---------------------------------------------------------------------------
+# Module-level caches for knowledge.json and structured_db.json
+# Loaded once at import time instead of re-reading from disk on every request.
+# ---------------------------------------------------------------------------
+_knowledge_cache: dict | None = None
+_structured_db_cache: dict | None = None
+
+
+def _load_knowledge_data_from_disk() -> dict:
+    """Read knowledge.json from disk (internal helper)."""
+    try:
+        if os.path.exists("knowledge.json"):
+            with open("knowledge.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error("Error reading knowledge.json: %s", e)
+    return {}
+
+
+def _load_structured_db_from_disk() -> dict:
+    """Read structured_db.json from disk (internal helper)."""
+    try:
+        if os.path.exists("structured_db.json"):
+            with open("structured_db.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error("Error reading structured_db.json: %s", e)
+    return {
+        "conditions": {},
+        "ingredient_remedies": [],
+        "mood_mind": {},
+        "prakriti_questions": [],
+        "knowledge_graph": {"nodes": [], "edges": []},
+    }
+
+
+def _init_caches():
+    """Initialize module-level caches."""
+    global _knowledge_cache, _structured_db_cache
+    _knowledge_cache = _load_knowledge_data_from_disk()
+    _structured_db_cache = _load_structured_db_from_disk()
+    logger.info(
+        "Caches loaded: %d symptoms, %d conditions",
+        len(_knowledge_cache),
+        len(_structured_db_cache.get("conditions", {})),
+    )
+
+
+def reload_caches():
+    """Hot-reload caches from disk (e.g. after updating JSON files)."""
+    _init_caches()
+
+
+# Initialize caches at module load
+_init_caches()
+
 
 def init_reminder_db():
     """Create reminders table if it does not exist."""
@@ -84,11 +143,75 @@ def init_reminder_db():
             """
         )
 
+        # Health tracker table (persistent, replaces in-memory TRACKER_STATE)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS health_tracker (
+                user_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                water INTEGER NOT NULL DEFAULT 0,
+                sleep INTEGER NOT NULL DEFAULT 0,
+                diet TEXT NOT NULL DEFAULT '',
+                good_day INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, date)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS health_tracker_meta (
+                user_id TEXT PRIMARY KEY,
+                streak INTEGER NOT NULL DEFAULT 0,
+                badges_json TEXT NOT NULL DEFAULT '[]',
+                last_date TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_state (
+                user_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL
+            )
+            """
+        )
+
         # Lightweight migration for older DBs created before timezone column existed.
         columns = [row[1] for row in conn.execute("PRAGMA table_info(daily_reminders)").fetchall()]
         if "timezone" not in columns:
             conn.execute("ALTER TABLE daily_reminders ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata'")
 
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_state(user_id):
+    """Retrieve user conversation state from database."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        row = conn.execute("SELECT state_json FROM user_state WHERE user_id = ?", (user_id,)).fetchone()
+        if row:
+            return json.loads(row[0])
+        return {}
+    finally:
+        conn.close()
+
+
+def save_user_state(user_id, state):
+    """Save user conversation state to database."""
+    init_reminder_db()
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        conn.execute(
+            """
+            INSERT INTO user_state (user_id, state_json)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json
+            """,
+            (user_id, json.dumps(state)),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -217,31 +340,13 @@ def mark_daily_reminder_sent(user_id, current_date):
 
 
 def load_structured_db():
-    """Load structured Ayurveda DB used for NLP and knowledge graph retrieval."""
-    try:
-        if os.path.exists("structured_db.json"):
-            with open("structured_db.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"Error reading structured DB: {e}")
-    return {
-        "conditions": {},
-        "ingredient_remedies": [],
-        "mood_mind": {},
-        "prakriti_questions": [],
-        "knowledge_graph": {"nodes": [], "edges": []},
-    }
+    """Return cached structured Ayurveda DB."""
+    return _structured_db_cache if _structured_db_cache is not None else _load_structured_db_from_disk()
 
 
 def load_knowledge_data():
-    """Load local Ayurvedic knowledge database."""
-    try:
-        if os.path.exists('knowledge.json'):
-            with open('knowledge.json', 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"Error reading local database: {e}")
-    return {}
+    """Return cached Ayurvedic knowledge database."""
+    return _knowledge_cache if _knowledge_cache is not None else _load_knowledge_data_from_disk()
 
 def get_ayurvedic_knowledge(symptom):
     """Search local knowledge.json file."""
@@ -378,7 +483,7 @@ def geocode_address(address):
             "display_name": first.get("display_name", address),
         }
     except Exception as e:
-        print(f"Geocoding error: {e}")
+        logger.error("Geocoding error: %s", e)
         return None
 
 
@@ -418,7 +523,7 @@ def find_nearest_hospitals(lat, lon, limit=5):
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as e:
-        print(f"Hospital lookup error: {e}")
+        logger.error("Hospital lookup error: %s", e)
         return []
 
     hospitals = []
@@ -722,8 +827,6 @@ def generate_gemini_with_timeout(prompt, timeout_seconds=12):
         raise result_holder["error"]
     return result_holder["response"]
 
-    return remedies
-
 
 def get_mood_mind_support(text):
     """Return dosha-linked mental wellness suggestions."""
@@ -776,7 +879,7 @@ def analyze_prakriti(answers):
         response = GEMINI_MODEL.generate_content(prompt)
         ai_text = response.text
     except Exception as e:
-        print(f"Prakriti AI fallback used: {e}")
+        logger.info("Prakriti AI fallback used: %s", e)
 
     fallback = (
         f"Dominant dosha: {dominant} (confidence: {confidence}%).\n"
@@ -810,14 +913,10 @@ def knowledge_graph_links(topic):
 
 
 def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, today=None):
-    """Update per-user daily habit tracker with simple gamification streaks."""
+    """Update per-user daily habit tracker with gamification (persisted to SQLite)."""
+    init_reminder_db()
     if today is None:
         today = date.today().isoformat()
-
-    tracker = TRACKER_STATE.setdefault(
-        user_id,
-        {"last_date": None, "streak": 0, "history": [], "badges": []},
-    )
 
     score = 0
     if water_glasses >= 8:
@@ -829,38 +928,72 @@ def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, tod
 
     good_day = score >= 2
 
-    if tracker["last_date"] is None:
-        tracker["streak"] = 1 if good_day else 0
-    else:
-        prev = date.fromisoformat(tracker["last_date"])
+    conn = sqlite3.connect(REMINDER_DB_PATH)
+    try:
+        # Upsert daily entry
+        conn.execute(
+            """
+            INSERT INTO health_tracker (user_id, date, water, sleep, diet, good_day)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, date) DO UPDATE SET
+                water=excluded.water,
+                sleep=excluded.sleep,
+                diet=excluded.diet,
+                good_day=excluded.good_day
+            """,
+            (user_id, today, water_glasses, sleep_hours, diet_quality, int(good_day)),
+        )
+
+        # Calculate streak from DB history directly
+        rows = conn.execute(
+            "SELECT date, good_day FROM health_tracker WHERE user_id = ? ORDER BY date DESC",
+            (user_id,),
+        ).fetchall()
+        dates_map = {r[0]: r[1] for r in rows}
+
         curr = date.fromisoformat(today)
-        if curr == prev:
-            # Same day update only replaces data.
-            pass
-        elif curr == prev + timedelta(days=1):
-            tracker["streak"] = tracker["streak"] + 1 if good_day else 0
+        if dates_map.get(today, 0) == 1:
+            streak = 1
+            check_date = curr - timedelta(days=1)
+            while dates_map.get(check_date.isoformat(), 0) == 1:
+                streak += 1
+                check_date -= timedelta(days=1)
         else:
-            tracker["streak"] = 1 if good_day else 0
+            streak = 0
 
-    tracker["last_date"] = today
-    tracker["history"].append(
-        {
-            "date": today,
-            "water": water_glasses,
-            "sleep": sleep_hours,
-            "diet": diet_quality,
-            "good_day": good_day,
-        }
-    )
+        # Read or create tracker meta
+        meta = conn.execute(
+            "SELECT streak, badges_json, last_date FROM health_tracker_meta WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
 
-    if tracker["streak"] >= 7 and "Healthy 7-Day Badge" not in tracker["badges"]:
-        tracker["badges"].append("Healthy 7-Day Badge")
-    if tracker["streak"] >= 21 and "Discipline 21-Day Badge" not in tracker["badges"]:
-        tracker["badges"].append("Discipline 21-Day Badge")
+        if meta is None:
+            badges = []
+            conn.execute(
+                "INSERT INTO health_tracker_meta (user_id, streak, badges_json, last_date) VALUES (?, ?, ?, ?)",
+                (user_id, streak, json.dumps(badges), today),
+            )
+        else:
+            _, badges_json, _ = meta
+            badges = json.loads(badges_json) if badges_json else []
+
+            if streak >= 7 and "Healthy 7-Day Badge" not in badges:
+                badges.append("Healthy 7-Day Badge")
+            if streak >= 21 and "Discipline 21-Day Badge" not in badges:
+                badges.append("Discipline 21-Day Badge")
+
+            conn.execute(
+                "UPDATE health_tracker_meta SET streak=?, badges_json=?, last_date=? WHERE user_id=?",
+                (streak, json.dumps(badges), today, user_id),
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
 
     return {
-        "streak": tracker["streak"],
-        "badges": list(tracker["badges"]),
+        "streak": streak,
+        "badges": badges,
         "good_day": good_day,
     }
 
@@ -885,10 +1018,10 @@ def get_ai_recommendation(symptom, age, severity):
         response = generate_gemini_with_timeout(prompt, timeout_seconds=12)
         return response.text
     except TimeoutError:
-        print("❌ AI Timeout: falling back to local recommendation")
+        logger.warning("AI Timeout: falling back to local recommendation")
         return build_non_ai_recommendation(symptom, age, severity, detailed=False)
     except Exception as e:
-        print(f"❌ AI Error: {e}")
+        logger.error("AI Error: %s", e)
         return build_non_ai_recommendation(symptom, age, severity, detailed=False)
 
 
@@ -931,7 +1064,7 @@ def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason
         response = generate_gemini_with_timeout(prompt, timeout_seconds=15)
         return response.text
     except TimeoutError:
-        print("❌ AI Detailed Timeout: falling back to local recommendation")
+        logger.warning("AI Detailed Timeout: falling back to local recommendation")
         return build_non_ai_recommendation(
             symptom,
             age,
@@ -942,7 +1075,7 @@ def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason
             activities=activities,
         )
     except Exception as e:
-        print(f"❌ AI Detailed Error: {e}")
+        logger.error("AI Detailed Error: %s", e)
         return build_non_ai_recommendation(
             symptom,
             age,
