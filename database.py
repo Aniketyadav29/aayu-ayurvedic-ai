@@ -68,6 +68,59 @@ DEFAULT_SYMPTOM_ALIASES = {
 TRACKER_STATE = {}
 REMINDER_DB_PATH = "reminders.db"
 
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+USING_POSTGRES = bool(DATABASE_URL)
+
+
+class DBRow(dict):
+    def __init__(self, col_names, row_tuple):
+        super().__init__(zip(col_names, row_tuple))
+        self._tuple = row_tuple
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._tuple[key]
+        return super().__getitem__(key)
+
+
+def get_db():
+    if USING_POSTGRES:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+    else:
+        conn = sqlite3.connect(REMINDER_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+    return conn, cur
+
+
+def query_db(cur, query, params=()):
+    if USING_POSTGRES:
+        query = query.replace('?', '%s')
+    cur.execute(query, params)
+    return cur
+
+
+def fetch_one(cur):
+    row = cur.fetchone()
+    if row is None:
+        return None
+    if USING_POSTGRES:
+        col_names = [desc[0] for desc in cur.description]
+        return DBRow(col_names, row)
+    return row
+
+
+def fetch_all(cur):
+    rows = cur.fetchall()
+    if USING_POSTGRES:
+        col_names = [desc[0] for desc in cur.description]
+        return [DBRow(col_names, r) for r in rows]
+    return rows
+
 # ---------------------------------------------------------------------------
 # Module-level caches for knowledge.json and structured_db.json
 # Loaded once at import time instead of re-reading from disk on every request.
@@ -127,9 +180,10 @@ _init_caches()
 
 def init_reminder_db():
     """Create reminders table if it does not exist."""
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        conn.execute(
+        query_db(
+            cur,
             """
             CREATE TABLE IF NOT EXISTS daily_reminders (
                 user_id TEXT PRIMARY KEY,
@@ -140,11 +194,12 @@ def init_reminder_db():
                 enabled INTEGER NOT NULL DEFAULT 1,
                 last_sent_date TEXT
             )
-            """
+            """,
         )
 
         # Health tracker table (persistent, replaces in-memory TRACKER_STATE)
-        conn.execute(
+        query_db(
+            cur,
             """
             CREATE TABLE IF NOT EXISTS health_tracker (
                 user_id TEXT NOT NULL,
@@ -155,9 +210,10 @@ def init_reminder_db():
                 good_day INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, date)
             )
-            """
+            """,
         )
-        conn.execute(
+        query_db(
+            cur,
             """
             CREATE TABLE IF NOT EXISTS health_tracker_meta (
                 user_id TEXT PRIMARY KEY,
@@ -165,21 +221,27 @@ def init_reminder_db():
                 badges_json TEXT NOT NULL DEFAULT '[]',
                 last_date TEXT
             )
-            """
+            """,
         )
-        conn.execute(
+        query_db(
+            cur,
             """
             CREATE TABLE IF NOT EXISTS user_state (
                 user_id TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL
             )
-            """
+            """,
         )
 
         # Lightweight migration for older DBs created before timezone column existed.
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(daily_reminders)").fetchall()]
-        if "timezone" not in columns:
-            conn.execute("ALTER TABLE daily_reminders ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata'")
+        if not USING_POSTGRES:
+            query_db(cur, "PRAGMA table_info(daily_reminders)")
+            columns = [row[1] for row in cur.fetchall()]
+            if "timezone" not in columns:
+                query_db(
+                    cur,
+                    "ALTER TABLE daily_reminders ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata'",
+                )
 
         conn.commit()
     finally:
@@ -189,9 +251,10 @@ def init_reminder_db():
 def get_user_state(user_id):
     """Retrieve user conversation state from database."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        row = conn.execute("SELECT state_json FROM user_state WHERE user_id = ?", (user_id,)).fetchone()
+        query_db(cur, "SELECT state_json FROM user_state WHERE user_id = ?", (user_id,))
+        row = fetch_one(cur)
         if row:
             return json.loads(row[0])
         return {}
@@ -202,9 +265,10 @@ def get_user_state(user_id):
 def save_user_state(user_id, state):
     """Save user conversation state to database."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        conn.execute(
+        query_db(
+            cur,
             """
             INSERT INTO user_state (user_id, state_json)
             VALUES (?, ?)
@@ -220,9 +284,10 @@ def save_user_state(user_id, state):
 def upsert_daily_reminder(user_id, phone, reminder_time, reminder_message):
     """Create or update a user's daily reminder."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        conn.execute(
+        query_db(
+            cur,
             """
             INSERT INTO daily_reminders (user_id, phone, reminder_time, reminder_message, timezone, enabled, last_sent_date)
             VALUES (?, ?, ?, ?, 'Asia/Kolkata', 1, NULL)
@@ -247,9 +312,10 @@ def set_user_timezone(user_id, timezone_name):
     except Exception:
         return False
 
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        cur = conn.execute(
+        query_db(
+            cur,
             "UPDATE daily_reminders SET timezone=? WHERE user_id=?",
             (timezone_name, user_id),
         )
@@ -262,9 +328,9 @@ def set_user_timezone(user_id, timezone_name):
 def disable_daily_reminder(user_id):
     """Disable daily reminder for a user."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        cur = conn.execute("UPDATE daily_reminders SET enabled=0 WHERE user_id=?", (user_id,))
+        query_db(cur, "UPDATE daily_reminders SET enabled=0 WHERE user_id=?", (user_id,))
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -274,13 +340,14 @@ def disable_daily_reminder(user_id):
 def get_user_daily_reminder(user_id):
     """Fetch configured daily reminder for a user."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn, cur = get_db()
     try:
-        row = conn.execute(
+        query_db(
+            cur,
             "SELECT user_id, phone, reminder_time, reminder_message, timezone, enabled, last_sent_date FROM daily_reminders WHERE user_id=?",
             (user_id,),
-        ).fetchone()
+        )
+        row = fetch_one(cur)
         return dict(row) if row else None
     finally:
         conn.close()
@@ -289,16 +356,17 @@ def get_user_daily_reminder(user_id):
 def get_all_enabled_daily_reminders():
     """Return all enabled reminders with timezone metadata."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn, cur = get_db()
     try:
-        rows = conn.execute(
+        query_db(
+            cur,
             """
             SELECT user_id, phone, reminder_time, reminder_message, timezone, enabled, last_sent_date
             FROM daily_reminders
             WHERE enabled=1
-            """
-        ).fetchall()
+            """,
+        )
+        rows = fetch_all(cur)
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -307,10 +375,10 @@ def get_all_enabled_daily_reminders():
 def get_due_daily_reminders(current_time, current_date):
     """Return reminders due at the provided HH:MM and not sent today."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn, cur = get_db()
     try:
-        rows = conn.execute(
+        query_db(
+            cur,
             """
             SELECT user_id, phone, reminder_time, reminder_message, enabled, last_sent_date
             FROM daily_reminders
@@ -319,7 +387,8 @@ def get_due_daily_reminders(current_time, current_date):
               AND (last_sent_date IS NULL OR last_sent_date <> ?)
             """,
             (current_time, current_date),
-        ).fetchall()
+        )
+        rows = fetch_all(cur)
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -328,15 +397,17 @@ def get_due_daily_reminders(current_time, current_date):
 def mark_daily_reminder_sent(user_id, current_date):
     """Mark reminder as sent for the day."""
     init_reminder_db()
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
-        conn.execute(
+        query_db(
+            cur,
             "UPDATE daily_reminders SET last_sent_date=? WHERE user_id=?",
             (current_date, user_id),
         )
         conn.commit()
     finally:
         conn.close()
+
 
 
 def load_structured_db():
@@ -928,10 +999,11 @@ def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, tod
 
     good_day = score >= 2
 
-    conn = sqlite3.connect(REMINDER_DB_PATH)
+    conn, cur = get_db()
     try:
         # Upsert daily entry
-        conn.execute(
+        query_db(
+            cur,
             """
             INSERT INTO health_tracker (user_id, date, water, sleep, diet, good_day)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -945,11 +1017,13 @@ def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, tod
         )
 
         # Calculate streak from DB history directly
-        rows = conn.execute(
+        query_db(
+            cur,
             "SELECT date, good_day FROM health_tracker WHERE user_id = ? ORDER BY date DESC",
             (user_id,),
-        ).fetchall()
-        dates_map = {r[0]: r[1] for r in rows}
+        )
+        rows = fetch_all(cur)
+        dates_map = {r["date"]: r["good_day"] for r in rows}
 
         curr = date.fromisoformat(today)
         if dates_map.get(today, 0) == 1:
@@ -962,19 +1036,22 @@ def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, tod
             streak = 0
 
         # Read or create tracker meta
-        meta = conn.execute(
+        query_db(
+            cur,
             "SELECT streak, badges_json, last_date FROM health_tracker_meta WHERE user_id=?",
             (user_id,),
-        ).fetchone()
+        )
+        meta = fetch_one(cur)
 
         if meta is None:
             badges = []
-            conn.execute(
+            query_db(
+                cur,
                 "INSERT INTO health_tracker_meta (user_id, streak, badges_json, last_date) VALUES (?, ?, ?, ?)",
                 (user_id, streak, json.dumps(badges), today),
             )
         else:
-            _, badges_json, _ = meta
+            badges_json = meta["badges_json"]
             badges = json.loads(badges_json) if badges_json else []
 
             if streak >= 7 and "Healthy 7-Day Badge" not in badges:
@@ -982,7 +1059,8 @@ def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, tod
             if streak >= 21 and "Discipline 21-Day Badge" not in badges:
                 badges.append("Discipline 21-Day Badge")
 
-            conn.execute(
+            query_db(
+                cur,
                 "UPDATE health_tracker_meta SET streak=?, badges_json=?, last_date=? WHERE user_id=?",
                 (streak, json.dumps(badges), today, user_id),
             )
@@ -996,6 +1074,7 @@ def update_health_tracker(user_id, water_glasses, sleep_hours, diet_quality, tod
         "badges": badges,
         "good_day": good_day,
     }
+
 
 def get_ai_recommendation(symptom, age, severity):
     """Call Gemini 2.5 Flash using the new SDK."""
