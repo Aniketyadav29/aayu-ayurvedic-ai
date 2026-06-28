@@ -1,5 +1,7 @@
 # Ayurvedic Recommendation System
 
+[![AAYU](https://img.shields.io/badge/AAYU-Ayurvedic_AI-4CAF50?style=for-the-badge)](https://aayu-ayurvedic-ai.vercel.app/)
+
 A Python CLI tool that gives Ayurvedic recommendations from a local knowledge base and falls back to Gemini for unknown symptoms.
 
 ## Setup
