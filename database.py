@@ -66,7 +66,7 @@ DEFAULT_SYMPTOM_ALIASES = {
 }
 
 TRACKER_STATE = {}
-REMINDER_DB_PATH = "reminders.db"
+REMINDER_DB_PATH = os.path.join("/tmp", "reminders.db") if os.getenv("VERCEL") else "reminders.db"
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
