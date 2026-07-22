@@ -10,7 +10,7 @@ import urllib.request
 from difflib import get_close_matches
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 
 logger = logging.getLogger("aayu.database")
@@ -18,21 +18,20 @@ logger = logging.getLogger("aayu.database")
 # Load API Keys
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "models/gemini-2.0-flash")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_MODEL_CANDIDATES = [
     GEMINI_MODEL_NAME,
-    "models/gemini-2.0-flash",
-    "models/gemini-2.5-flash",
-    "models/gemini-flash-latest",
-    "models/gemini-pro-latest",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-pro-latest",
 ]
 
-# Configure SDK exactly in the stable format and keep one reusable model handle.
+# New unified google-genai SDK client (handles both AIza and AQ. Auth keys internally).
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    GEMINI_MODEL = genai.GenerativeModel(GEMINI_MODEL_CANDIDATES[0])
+    GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY)
 else:
-    GEMINI_MODEL = None
+    GEMINI_CLIENT = None
 
 DEFAULT_SYMPTOM_ALIASES = {
     "high temperature": "fever",
@@ -872,14 +871,15 @@ def generate_gemini_with_timeout(prompt, timeout_seconds=12):
 
     def _worker():
         try:
-            if not GEMINI_MODEL:
+            if not GEMINI_CLIENT:
                 raise ValueError("Gemini API key is not configured")
 
             last_err = None
             for model_name in GEMINI_MODEL_CANDIDATES:
                 try:
-                    model = genai.GenerativeModel(model_name)
-                    result_holder["response"] = model.generate_content(prompt)
+                    result_holder["response"] = GEMINI_CLIENT.models.generate_content(
+                        model=model_name, contents=prompt
+                    )
                     return
                 except Exception as model_err:
                     last_err = model_err
@@ -945,9 +945,9 @@ def analyze_prakriti(answers):
             "secondary dosha, and give 3 concise lifestyle tips.\n"
             f"Answers: {answers}"
         )
-        if not GEMINI_MODEL:
+        if not GEMINI_CLIENT:
             raise ValueError("Gemini API key is not configured")
-        response = GEMINI_MODEL.generate_content(prompt)
+        response = GEMINI_CLIENT.models.generate_content(model=GEMINI_MODEL_NAME, contents=prompt)
         ai_text = response.text
     except Exception as e:
         logger.info("Prakriti AI fallback used: %s", e)
