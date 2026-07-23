@@ -858,14 +858,14 @@ Rules:
 """
 
     try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=9)
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=6)
         text = (getattr(response, "text", "") or "").strip()
         return text if text else fallback_text
     except Exception:
         return fallback_text
 
 
-def generate_gemini_with_timeout(prompt, timeout_seconds=9):
+def generate_gemini_with_timeout(prompt, timeout_seconds=6):
     """Call Gemini with a hard timeout without blocking webhook response."""
     result_holder = {"response": None, "error": None}
 
@@ -1094,7 +1094,7 @@ def get_ai_recommendation(symptom, age, severity):
         return build_non_ai_recommendation(symptom, age, severity, detailed=False)
 
     try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=9)
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=6)
         return response.text
     except TimeoutError:
         logger.warning("AI Timeout: falling back to local recommendation")
@@ -1140,7 +1140,7 @@ def get_ai_detailed_recommendation(symptom, age, severity, duration, pain_reason
         )
 
     try:
-        response = generate_gemini_with_timeout(prompt, timeout_seconds=10)
+        response = generate_gemini_with_timeout(prompt, timeout_seconds=6)
         return response.text
     except TimeoutError:
         logger.warning("AI Detailed Timeout: falling back to local recommendation")
